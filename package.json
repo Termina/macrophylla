@@ -1,0 +1,16 @@
+{
+  "dependencies": {
+    "@calcit/procs": "^0.9.9"
+  },
+  "scripts": {
+    "compile-page": "cr --once js",
+    "release-page": "vite build --base=./",
+    "watch-page": "cr js"
+  },
+  "devDependencies": {
+    "bottom-tip": "^0.1.5",
+    "url-parse": "^1.5.10",
+    "vite": "^6.2.5"
+  },
+  "version": "0.0.1"
+}
