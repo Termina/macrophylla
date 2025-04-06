@@ -1,4 +1,5 @@
 {
+  "name": "macrophylla",
   "dependencies": {
     "@calcit/procs": "^0.9.9",
     "@google/generative-ai": "^0.24.0",
@@ -9,6 +10,9 @@
     "release-page": "vite build --base=./",
     "watch-page": "cr js",
     "tool": "tsc && node lib/main.mjs"
+  },
+  "bin": {
+    "mcpl": "./bin.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
