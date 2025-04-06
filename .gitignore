@@ -14,4 +14,4 @@ storage.cirru
 backups/
 
 .DS_Store
-lib/*
+lib

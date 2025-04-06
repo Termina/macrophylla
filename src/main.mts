@@ -65,50 +65,53 @@ const ask = (question: string) => {
 };
 
 const sayingOk = (message: string) => {
-  return message === "ok" || message === "yes" || message === "y";
+  return (
+    message === "ok" || message === "yes" || message === "y" || message === ""
+  );
 };
+
+const tools: Tool[] = [
+  {
+    functionDeclarations: [
+      {
+        name: "executeBashCommand",
+        description:
+          "provide bash command, run in system, and return the output. it can access file system. also called 'bash 脚本'",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            command: {
+              type: SchemaType.STRING,
+              description: "The bash command to execute",
+            },
+          },
+          required: ["command"],
+        },
+      },
+      {
+        name: "executeNodeCode",
+        description:
+          "provide node.js script in ES Module syntax. Execute in system and return the output. it can access the file system. also called 'node.js 脚本'",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            code: {
+              type: SchemaType.STRING,
+              description:
+                "The Node.js code to execute. Must use ES module syntax. Write self-contained code that doesn't depend on external files.",
+            },
+          },
+          required: ["code"],
+        },
+      },
+    ],
+  },
+];
 
 const main = async () => {
   try {
     // Create a chat session
     // Define a function declaration tool
-    const tools: Tool[] = [
-      {
-        functionDeclarations: [
-          {
-            name: "executeBashCommand",
-            description:
-              "provide bash command, run in system, and return the output. it can access file system. also called 'bash 脚本'",
-            parameters: {
-              type: SchemaType.OBJECT,
-              properties: {
-                command: {
-                  type: SchemaType.STRING,
-                  description: "The bash command to execute",
-                },
-              },
-              required: ["command"],
-            },
-          },
-          {
-            name: "executeNodeCode",
-            description:
-              "provide node.js script in ES Module syntax. Execute in system and return the output. it can access the file system. also called 'node.js 脚本'",
-            parameters: {
-              type: SchemaType.OBJECT,
-              properties: {
-                code: {
-                  type: SchemaType.STRING,
-                  description:
-                    "The Node.js code to execute. Must use ES module syntax (e.g., 'import fs from \"fs/promises\"' instead of 'const fs = require(\"fs\")'). Write self-contained code that doesn't depend on external files.",
-                },
-              },
-              required: ["code"],
-            },
-          },
-        ],
-      },
-    ];
 
     // Configure tool settings
     const toolConfig: ToolConfig = {
@@ -126,22 +129,25 @@ const main = async () => {
           role: "user",
           parts: [
             {
-              text: "每次回答都可以先考虑是否调用 executeBashCommand 或者 executeNodeCode 这些工具函数然后再回复, 注意结合上下文.  请尽可能使用中文回复我的问题，但是代码保留英文。",
+              text: "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复, 注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。",
             },
           ],
         },
       ],
     });
 
+    let nextQuestion: string = "";
+
     while (true) {
-      const question = await ask("\nWhat's the task: ");
+      const question = nextQuestion || (await ask("\nWhat's the task: "));
 
       if (question.toLowerCase() === "exit") {
         console.log("Bye!");
         break;
       }
 
-      console.log("\nResponse:");
+      console.log(chalk.gray("\nResponding...\n"));
+
       // Use the chat API to send messages and get streaming responses
       const response = await chat.sendMessage(question);
       const textResponse = response.response.text();
@@ -149,148 +155,113 @@ const main = async () => {
         process.stdout.write(textResponse);
       }
 
+      // clear the next question cache
+      nextQuestion = "";
+
       // Handle function calls if any
-      const functionCalls = response.response.functionCalls();
-      if (functionCalls && functionCalls.length > 0) {
-        for (const functionCall of functionCalls) {
-          if (functionCall.name === "executeBashCommand") {
-            const args: any = functionCall.args;
-            const command = args.command;
-            // Ask for user confirmation
-            console.log(`\nBash command to execute:`);
-            console.log(chalk.yellow(command));
-            const confirmation = await ask(
-              `\nExecute this Bash command? (y/n):`
-            );
+      const functionCalls = response.response.functionCalls() || [];
 
-            if (sayingOk(confirmation)) {
-              console.log(`\nExecuting bash command: ${command}`);
+      for (const functionCall of functionCalls) {
+        if (functionCall.name === "executeBashCommand") {
+          const args: any = functionCall.args;
+          const command = args.command;
+          // Ask for user confirmation
+          console.log(`\nBash command to execute:`);
+          console.log(chalk.yellow(command));
+          const confirmation = await ask(
+            `\nExecute this Bash command? (y/n): `
+          );
 
-              try {
-                const { stdout, stderr } = await execPromise(command);
-                const result = { stdout, stderr, success: true };
-                if (result.success) {
-                  console.log(result.stdout);
-                } else {
-                  console.log(result.stderr);
-                }
+          if (sayingOk(confirmation)) {
+            console.log(`\nExecuting bash command: ${command}`);
 
-                // Send the result back to the model
-                const functionResponse = await chat.sendMessage(
-                  JSON.stringify(result)
-                );
-                console.log("\n");
-                process.stdout.write(functionResponse.response.text());
-              } catch (error) {
-                const result = {
-                  stdout: error.stdout || "",
-                  stderr: error.stderr || error.message,
-                  success: false,
-                };
-
-                const functionResponse = await chat.sendMessage(
-                  JSON.stringify(result)
-                );
-                console.log("\n");
-                console.log("Command failed:", result);
-                console.log("\nFunction response:");
-                process.stdout.write(functionResponse.response.text());
+            try {
+              const { stdout, stderr } = await execPromise(command);
+              const result = { stdout, stderr, success: true };
+              if (result.success) {
+                console.log(result.stdout);
+              } else {
+                console.log(result.stderr);
               }
-            } else {
-              const result = {
-                stdout: "",
-                stderr: "User declined to execute the command",
-                success: false,
-              };
 
-              const functionResponse = await chat.sendMessage(
-                JSON.stringify(result)
-              );
-              console.log("\nUser declined to execute the command");
-            }
-          } else if (functionCall.name === "executeNodeCode") {
-            const args: any = functionCall.args;
-            const code = args.code;
-
-            // Ask for user confirmation
-            // Display code with syntax highlighting and ask for confirmation
-            console.log("\nNode.js code to execute:");
-            console.log(chalk.yellow(code));
-            const confirmation = await ask(
-              `\nExecute this Node.js code? (y/n): `
-            );
-
-            if (sayingOk(confirmation)) {
-              console.log(`\nExecuting Node.js code`);
-
-              try {
-                // Execute the code
-                const tempDir = path.join(process.cwd(), "./");
-                const { stdout, stderr } = await executeNodeJsCode(
-                  code,
-                  tempDir
-                );
-
-                const output = {
-                  stdout,
-                  stderr,
-                  success: true,
-                };
-                if (output.success) {
-                  console.log(output.stdout);
-                } else {
-                  console.log(chalk.red("Execution failed:"), output);
-                }
-
-                // Send the result back to the model using streaming
-                const functionResponse = await chat.sendMessageStream(
-                  JSON.stringify(output)
-                );
-                console.log("\n");
-                for await (const chunk of functionResponse.stream) {
-                  process.stdout.write(chunk.text());
-                }
-              } catch (error) {
-                const output = {
-                  stdout: "",
-                  stderr: error.message || String(error),
-                  success: false,
-                };
-
-                const functionResponse = await chat.sendMessage(
-                  JSON.stringify(output)
-                );
-                console.log("Code execution failed:", output);
-                console.log("\n");
-                process.stdout.write(functionResponse.response.text());
-              }
-            } else {
-              const result = {
-                stdout: "",
-                stderr: "User declined to execute the code",
-                success: false,
-              };
-
+              // Send the result back to the model
               const functionResponse = await chat.sendMessageStream(
                 JSON.stringify(result)
               );
+              console.log("\n");
               for await (const chunk of functionResponse.stream) {
                 process.stdout.write(chunk.text());
               }
-              console.log("\nUser declined to execute the code");
+            } catch (error) {
+              const result = {
+                stdout: error.stdout || "",
+                stderr: error.stderr || error.message,
+                success: false,
+              };
+              console.log("\n");
+              console.log("Command failed:", result);
+
+              nextQuestion = `命令执行过程当中失败: ${result.stderr}, 你能否改进一下方案?`;
             }
+          } else {
+            nextQuestion = `用户拒绝了这条命令: (${confirmation}), 尝试改进一下方案.`;
+          }
+        } else if (functionCall.name === "executeNodeCode") {
+          const args: any = functionCall.args;
+          const code = args.code;
+
+          // Ask for user confirmation
+          // Display code with syntax highlighting and ask for confirmation
+          console.log(chalk.gray("\nNode.js code to execute:"));
+          console.log(chalk.yellow(code));
+          const confirmation = await ask(
+            `\nExecute this Node.js code? (y/n): `
+          );
+
+          if (sayingOk(confirmation)) {
+            console.log(chalk.gray(`\nExecuting Node.js code`));
+
+            try {
+              // Execute the code
+              const tempDir = path.join(process.cwd(), "./");
+              const { stdout, stderr } = await executeNodeJsCode(code, tempDir);
+
+              const output = {
+                stdout,
+                stderr,
+                success: true,
+              };
+              if (output.success) {
+                console.log(output.stdout);
+              } else {
+                console.log(chalk.red("Execution failed:"), output);
+              }
+
+              nextQuestion = JSON.stringify(output);
+            } catch (error) {
+              const output = {
+                stdout: "",
+                stderr: error.message || String(error),
+                success: false,
+              };
+              console.log("\n");
+              console.log("Code execution failed:", output);
+              nextQuestion = `Node.js 代码执行失败: ${output.stderr}, 你能否改进一下方案?`;
+            }
+          } else {
+            nextQuestion = `用户拒绝了这段代码: (${confirmation}), 尝试改进一下方案.`;
           }
         }
       }
-
-      console.log("\n");
     }
   } catch (err) {
-    console.error("发生错误:", err);
+    console.error("Error:", err);
     rl.close();
     process.exit(1);
   } finally {
+    console.log("Exiting...");
     rl.close();
   }
 };
+
 main();
