@@ -138,7 +138,7 @@ const main = async () => {
 
     let nextQuestion: string = "";
 
-    while (true) {
+    outerWhile: while (true) {
       const question = nextQuestion || (await ask("\nWhat's the task: "));
 
       if (question.toLowerCase() === "exit") {
@@ -149,17 +149,16 @@ const main = async () => {
       console.log(chalk.gray("\nResponding...\n"));
 
       // Use the chat API to send messages and get streaming responses
-      const response = await chat.sendMessage(question);
-      const textResponse = response.response.text();
-      if (textResponse) {
-        process.stdout.write(textResponse);
+      const response = await chat.sendMessageStream(question);
+      for await (const chunk of response.stream) {
+        process.stdout.write(chunk.text());
       }
 
       // clear the next question cache
       nextQuestion = "";
 
       // Handle function calls if any
-      const functionCalls = response.response.functionCalls() || [];
+      const functionCalls = (await response.response).functionCalls() || [];
 
       for (const functionCall of functionCalls) {
         if (functionCall.name === "executeBashCommand") {
@@ -184,14 +183,8 @@ const main = async () => {
                 console.log(result.stderr);
               }
 
-              // Send the result back to the model
-              const functionResponse = await chat.sendMessageStream(
-                JSON.stringify(result)
-              );
-              console.log("\n");
-              for await (const chunk of functionResponse.stream) {
-                process.stdout.write(chunk.text());
-              }
+              nextQuestion = JSON.stringify(result);
+              continue outerWhile;
             } catch (error) {
               const result = {
                 stdout: error.stdout || "",
@@ -202,9 +195,11 @@ const main = async () => {
               console.log("Command failed:", result);
 
               nextQuestion = `命令执行过程当中失败: ${result.stderr}, 你能否改进一下方案?`;
+              continue outerWhile;
             }
           } else {
             nextQuestion = `用户拒绝了这条命令: (${confirmation}), 尝试改进一下方案.`;
+            continue outerWhile;
           }
         } else if (functionCall.name === "executeNodeCode") {
           const args: any = functionCall.args;
@@ -238,6 +233,7 @@ const main = async () => {
               }
 
               nextQuestion = JSON.stringify(output);
+              continue outerWhile;
             } catch (error) {
               const output = {
                 stdout: "",
@@ -247,9 +243,11 @@ const main = async () => {
               console.log("\n");
               console.log("Code execution failed:", output);
               nextQuestion = `Node.js 代码执行失败: ${output.stderr}, 你能否改进一下方案?`;
+              continue outerWhile;
             }
           } else {
             nextQuestion = `用户拒绝了这段代码: (${confirmation}), 尝试改进一下方案.`;
+            continue outerWhile;
           }
         }
       }
