@@ -3,7 +3,8 @@
   "dependencies": {
     "@calcit/procs": "^0.9.9",
     "@google/generative-ai": "^0.24.0",
-    "chalk": "^5.4.1"
+    "chalk": "^5.4.1",
+    "string-width": "^7.2.0"
   },
   "scripts": {
     "compile-page": "cr --once js",

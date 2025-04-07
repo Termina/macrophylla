@@ -11,6 +11,7 @@ import fs from "fs/promises";
 import { exec, execFile } from "child_process";
 import { promisify } from "util";
 import chalk from "chalk";
+import stringWidth from "string-width";
 
 // Promisify functions
 const execPromise = promisify(exec);
@@ -56,7 +57,12 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-const ask = (question: string) => {
+const ask = (question: string, seperator: boolean = false) => {
+  if (seperator) {
+    console.log(
+      chalk.gray("\n-------------------------------------------------")
+    );
+  }
   return new Promise<string>((resolve) => {
     rl.question(chalk.cyan(question), (answer) => {
       resolve(answer);
@@ -108,6 +114,27 @@ const tools: Tool[] = [
   },
 ];
 
+const displayBoxedText = (text: string) => {
+  const lines = text.split("\n");
+  const maxLength = lines.reduce(
+    (max: number, line: string) => Math.max(max, stringWidth(line)),
+    0
+  );
+  const horizontalLine = "┌" + "─".repeat(maxLength + 2) + "┐";
+  const verticalLine = "│ ";
+
+  console.log(chalk.gray(horizontalLine));
+  lines.forEach((line: string) => {
+    const displayLength = stringWidth(line);
+    console.log(
+      chalk.gray(
+        verticalLine + line + " ".repeat(maxLength - displayLength) + " │"
+      )
+    );
+  });
+  console.log(chalk.gray("└" + "─".repeat(maxLength + 2) + "┘"));
+};
+
 const main = async () => {
   try {
     // Create a chat session
@@ -129,7 +156,10 @@ const main = async () => {
           role: "user",
           parts: [
             {
-              text: "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复, 注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。",
+              text:
+                "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复" +
+                "注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。" +
+                "另外注意提早获取当前系统的信息, 方便后续的命令执行",
             },
           ],
         },
@@ -139,10 +169,11 @@ const main = async () => {
     let nextQuestion: string = "";
 
     outerWhile: while (true) {
-      const question = nextQuestion || (await ask("\nWhat's the task: "));
+      const question =
+        nextQuestion || (await ask("\nWhat's the task: ", true)) || "继续";
 
       if (question.toLowerCase() === "exit") {
-        console.log("Bye!");
+        console.log("\nBye!");
         break;
       }
 
@@ -165,8 +196,10 @@ const main = async () => {
           const args: any = functionCall.args;
           const command = args.command;
           // Ask for user confirmation
-          console.log(`\nBash command to execute:`);
-          console.log(chalk.yellow(command));
+          console.log(`\nBash command to execute:\n`);
+
+          console.log(`\nBash command to execute:\n`);
+          displayBoxedText(command);
           const confirmation = await ask(
             `\nExecute this Bash command? (y/n): `
           );
@@ -208,7 +241,7 @@ const main = async () => {
           // Ask for user confirmation
           // Display code with syntax highlighting and ask for confirmation
           console.log(chalk.gray("\nNode.js code to execute:"));
-          console.log(chalk.yellow(code));
+          displayBoxedText(code);
           const confirmation = await ask(
             `\nExecute this Node.js code? (y/n): `
           );
@@ -257,7 +290,6 @@ const main = async () => {
     rl.close();
     process.exit(1);
   } finally {
-    console.log("Exiting...");
     rl.close();
   }
 };
