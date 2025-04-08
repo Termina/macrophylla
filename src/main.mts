@@ -126,6 +126,16 @@ let execBash = async (
   });
 };
 
+// 添加一个函数来生成上下文提醒
+const getContextReminder = () => {
+  return (
+    "提醒: 你是一个命令行助手。你可以:\n" +
+    "1. 使用 executeBashCommand 执行 bash 命令\n" +
+    "2. 使用 executeNodeCode 执行 Node.js 代码\n" +
+    "请在每次回答时都考虑使用这些工具来帮助用户。"
+  );
+};
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -237,10 +247,16 @@ const main = async () => {
           parts: [
             {
               text:
-                "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复. " +
-                "注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。 " +
-                "另外注意提早获取当前系统的信息, 方便后续的命令执行. " +
-                `当前系统信息: ${osInfo}, Node.js 信息: ${nodeInfo}, Bash 信息: ${bashInfo}`,
+                "系统初始化配置:\n" +
+                "1. 你是一个专业的命令行助手，工作在当前进程目录下\n" +
+                "2. 你可以调用 executeBashCommand 执行 bash 命令\n" +
+                "3. 你可以调用 executeNodeCode 执行 Node.js 代码\n" +
+                "4. 每次回答都应该考虑使用这些工具收集信息\n" +
+                "5. 使用中文回复，但代码保持英文\n" +
+                "6. 失败时要理解上下文并优化重试\n" +
+                `当前系统信息: ${osInfo}\n` +
+                `Node.js 信息: ${nodeInfo}\n` +
+                `Bash 信息: ${bashInfo}`,
             },
           ],
         },
@@ -248,14 +264,22 @@ const main = async () => {
     });
 
     let nextQuestion: string = "";
+    let messageCount = 0;
 
     outerWhile: while (true) {
-      const question =
+      let question =
         nextQuestion || (await ask("\nWhat's the task: ", true)) || "继续";
 
       if (question.toLowerCase() === "exit") {
         console.log("\nBye!");
         break;
+      }
+      // 每隔 5 轮对话，插入上下文提醒
+      messageCount++;
+      if (messageCount % 10 === 0) {
+        const reminder = getContextReminder();
+        console.log(chalk.gray("\n\n" + reminder));
+        question = `${reminder}\n\n${question}`;
       }
 
       console.log(chalk.gray("\nResponding...\n"));
