@@ -27,7 +27,13 @@ const model = genAI.getGenerativeModel(
 );
 
 // Define function to execute Node.js code
-const executeNodeJsCode = async (code: string, tempDir: string) => {
+const executeNodeJsCode = async (
+  code: string,
+  tempDir: string
+): Promise<{
+  stdout: string;
+  stderr: string;
+}> => {
   // Create temp directory if it doesn't exist
   try {
     await fs.mkdir(tempDir, { recursive: true });
@@ -38,12 +44,41 @@ const executeNodeJsCode = async (code: string, tempDir: string) => {
   // Create a temporary file with the code
   const tempFilePath = path.join(tempDir, `exec_${Date.now()}.mjs`);
   await fs.writeFile(tempFilePath, code);
-
   // Execute the file as an ES module
-  const result = await execFilePromise("node", [
-    "--experimental-modules",
-    tempFilePath,
-  ]);
+  const child = execFile("node", ["--experimental-modules", tempFilePath], {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024, // 10MB buffer to handle large outputs
+  });
+
+  let stdout = "";
+  let stderr = "";
+
+  // Stream stdout in real-time while preserving color
+  child.stdout?.on("data", (data) => {
+    process.stdout.write(data);
+    stdout += data;
+  });
+
+  // Stream stderr in real-time while preserving color
+  child.stderr?.on("data", (data) => {
+    process.stderr.write(data);
+    stderr += data;
+  });
+
+  // Wait for process to complete
+  const result = await new Promise<{ stdout: string; stderr: string }>(
+    (resolve, reject) => {
+      child.on("close", (code) => {
+        if (code === 0 || code === null) {
+          resolve({ stdout, stderr });
+        } else {
+          reject(new Error(`Process exited with code ${code}\n${stderr}`));
+        }
+      });
+
+      child.on("error", reject);
+    }
+  );
 
   // Clean up the temporary file
   await fs
@@ -51,6 +86,44 @@ const executeNodeJsCode = async (code: string, tempDir: string) => {
     .catch((err) => console.error("Failed to delete temp file:", err));
 
   return result;
+};
+
+let execBash = async (
+  command: string
+): Promise<{ stdout: string; stderr: string }> => {
+  // Execute the command
+  const child = exec(command, {
+    encoding: "utf8",
+    maxBuffer: 10 * 1024 * 1024, // 10MB buffer to handle large outputs
+  });
+
+  let stdout = "";
+  let stderr = "";
+
+  // Stream stdout in real-time while preserving colors
+  child.stdout?.on("data", (data) => {
+    process.stdout.write(data);
+    stdout += data;
+  });
+
+  // Stream stderr in real-time while preserving colors
+  child.stderr?.on("data", (data) => {
+    process.stderr.write(data);
+    stderr += data;
+  });
+
+  // Wait for process to complete
+  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+    child.on("close", (code) => {
+      if (code === 0 || code === null) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(new Error(`Process exited with code ${code}\n${stderr}`));
+      }
+    });
+
+    child.on("error", reject);
+  });
 };
 
 const rl = readline.createInterface({
@@ -164,9 +237,9 @@ const main = async () => {
           parts: [
             {
               text:
-                "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复" +
-                "注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。" +
-                "另外注意提早获取当前系统的信息, 方便后续的命令执行." +
+                "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复. " +
+                "注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。 " +
+                "另外注意提早获取当前系统的信息, 方便后续的命令执行. " +
                 `当前系统信息: ${osInfo}, Node.js 信息: ${nodeInfo}, Bash 信息: ${bashInfo}`,
             },
           ],
@@ -205,8 +278,6 @@ const main = async () => {
           const command = args.command;
           // Ask for user confirmation
           console.log(`\nBash command to execute:\n`);
-
-          console.log(`\nBash command to execute:\n`);
           displayBoxedText(command);
           const confirmation = await ask(
             `\nExecute this Bash command? (y/n): `
@@ -216,12 +287,12 @@ const main = async () => {
             console.log(chalk.gray(`\nExecuting bash command...`));
 
             try {
-              const { stdout, stderr } = await execPromise(command);
+              const { stdout, stderr } = await execBash(command);
               const result = { stdout, stderr, success: true };
               if (result.success) {
-                console.log(result.stdout);
+                console.log(chalk.green("运行成功."));
               } else {
-                console.log(result.stderr);
+                console.log(chalk.red("运行失败\n" + result.stderr));
               }
 
               nextQuestion = JSON.stringify(result);
@@ -268,9 +339,9 @@ const main = async () => {
                 success: true,
               };
               if (output.success) {
-                console.log(output.stdout);
+                console.log(chalk.green("运行成功."));
               } else {
-                console.log(chalk.red("Execution failed:"), output);
+                console.log(chalk.red("运行失败\n" + output.stderr));
               }
 
               nextQuestion = JSON.stringify(output);
