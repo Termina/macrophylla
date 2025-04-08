@@ -5,10 +5,11 @@ import {
   SchemaType,
   ToolConfig,
 } from "@google/generative-ai";
+import os from "os";
 import * as readline from "readline";
 import path from "path";
 import fs from "fs/promises";
-import { exec, execFile } from "child_process";
+import { exec, execFile, execFileSync, execSync } from "child_process";
 import { promisify } from "util";
 import chalk from "chalk";
 import stringWidth from "string-width";
@@ -136,6 +137,12 @@ const displayBoxedText = (text: string) => {
 };
 
 const main = async () => {
+  let osInfo = `${process.platform}, 架构: ${process.arch}, CPU 核心数: ${
+    os.cpus().length
+  }.`;
+  let nodeInfo = `${process.version}, 当前目录: ${process.cwd()}.`;
+  let bashInfo = execSync("bash --version | head -n 1");
+
   try {
     // Create a chat session
     // Define a function declaration tool
@@ -159,7 +166,8 @@ const main = async () => {
               text:
                 "你现在是一个命令行助手, 基于当前进程所在的目录工作. 每次回答都可以考虑调用 executeBashCommand 或者 executeNodeCode 收集更详细的信息来回复" +
                 "注意结合上下文来理解意思以便失败的时候重试. 使用中文回复我的指令，代码保留英文。" +
-                "另外注意提早获取当前系统的信息, 方便后续的命令执行",
+                "另外注意提早获取当前系统的信息, 方便后续的命令执行." +
+                `当前系统信息: ${osInfo}, Node.js 信息: ${nodeInfo}, Bash 信息: ${bashInfo}`,
             },
           ],
         },
@@ -205,7 +213,7 @@ const main = async () => {
           );
 
           if (sayingOk(confirmation)) {
-            console.log(`\nExecuting bash command: ${command}`);
+            console.log(chalk.gray(`\nExecuting bash command...`));
 
             try {
               const { stdout, stderr } = await execPromise(command);
@@ -247,7 +255,7 @@ const main = async () => {
           );
 
           if (sayingOk(confirmation)) {
-            console.log(chalk.gray(`\nExecuting Node.js code`));
+            console.log(chalk.gray(`\nExecuting Node.js code...`));
 
             try {
               // Execute the code
