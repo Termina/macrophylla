@@ -7,16 +7,12 @@ import {
 } from "@google/generative-ai";
 import os from "os";
 import * as readline from "readline";
-import path from "path";
-import fs from "fs/promises";
-import { exec, execFile, execFileSync, execSync } from "child_process";
-import { promisify } from "util";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { execSync } from "child_process";
 import chalk from "chalk";
-import stringWidth from "string-width";
-
-// Promisify functions
-const execPromise = promisify(exec);
-const execFilePromise = promisify(execFile);
+import { execBash, executeNodeJsCode } from "./exec.mjs";
+import { displayBoxedText } from "./util.mjs";
 
 // Initialize the Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -26,112 +22,14 @@ const model = genAI.getGenerativeModel(
   { baseUrl: "https://sf.chenyong.life" }
 );
 
-// Define function to execute Node.js code
-const executeNodeJsCode = async (
-  code: string,
-  tempDir: string
-): Promise<{
-  stdout: string;
-  stderr: string;
-}> => {
-  // Create temp directory if it doesn't exist
-  try {
-    await fs.mkdir(tempDir, { recursive: true });
-  } catch (err) {
-    // Directory might already exist
-  }
-
-  // Create a temporary file with the code
-  const tempFilePath = path.join(tempDir, `exec_${Date.now()}.mjs`);
-  await fs.writeFile(tempFilePath, code);
-  // Execute the file as an ES module
-  const child = execFile("node", ["--experimental-modules", tempFilePath], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024, // 10MB buffer to handle large outputs
-  });
-
-  let stdout = "";
-  let stderr = "";
-
-  // Stream stdout in real-time while preserving color
-  child.stdout?.on("data", (data) => {
-    process.stdout.write(data);
-    stdout += data;
-  });
-
-  // Stream stderr in real-time while preserving color
-  child.stderr?.on("data", (data) => {
-    process.stderr.write(data);
-    stderr += data;
-  });
-
-  // Wait for process to complete
-  const result = await new Promise<{ stdout: string; stderr: string }>(
-    (resolve, reject) => {
-      child.on("close", (code) => {
-        if (code === 0 || code === null) {
-          resolve({ stdout, stderr });
-        } else {
-          reject(new Error(`Process exited with code ${code}\n${stderr}`));
-        }
-      });
-
-      child.on("error", reject);
-    }
-  );
-
-  // Clean up the temporary file
-  await fs
-    .unlink(tempFilePath)
-    .catch((err) => console.error("Failed to delete temp file:", err));
-
-  return result;
-};
-
-let execBash = async (
-  command: string
-): Promise<{ stdout: string; stderr: string }> => {
-  // Execute the command
-  const child = exec(command, {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024, // 10MB buffer to handle large outputs
-  });
-
-  let stdout = "";
-  let stderr = "";
-
-  // Stream stdout in real-time while preserving colors
-  child.stdout?.on("data", (data) => {
-    process.stdout.write(data);
-    stdout += data;
-  });
-
-  // Stream stderr in real-time while preserving colors
-  child.stderr?.on("data", (data) => {
-    process.stderr.write(data);
-    stderr += data;
-  });
-
-  // Wait for process to complete
-  return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    child.on("close", (code) => {
-      if (code === 0 || code === null) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new Error(`Process exited with code ${code}\n${stderr}`));
-      }
-    });
-
-    child.on("error", reject);
-  });
-};
-
 // 添加一个函数来生成上下文提醒
 const getContextReminder = () => {
   return (
     "提醒: 你是一个命令行助手。你可以:\n" +
     "1. 使用 executeBashCommand 执行 bash 命令\n" +
     "2. 使用 executeNodeCode 执行 Node.js 代码\n" +
+    "3. 使用 saveToFile 保存输出到文件\n" +
+    "4. 使用 readTextFile 读取文件内容\n" +
     "请在每次回答时都考虑使用这些工具来帮助用户。"
   );
 };
@@ -194,29 +92,122 @@ const tools: Tool[] = [
           required: ["code"],
         },
       },
+      {
+        name: "saveToFile",
+        description:
+          "save the output to a path based on the current working directory",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            code: {
+              type: SchemaType.STRING,
+              description: "any code that you want to save to file",
+            },
+            filepath: {
+              type: SchemaType.STRING,
+              description:
+                "the path to save the file, relative to the current working directory",
+            },
+          },
+        },
+      },
+      {
+        name: "readTextFile",
+        description:
+          "read a text file and return the content(utf8). it can access the file system. also called '读取文本文件'",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            filepath: {
+              type: SchemaType.STRING,
+              description:
+                "the path to read, relative to the current working directory",
+            },
+          },
+        },
+      },
     ],
   },
 ];
 
-const displayBoxedText = (text: string) => {
-  const lines = text.split("\n");
-  const maxLength = lines.reduce(
-    (max: number, line: string) => Math.max(max, stringWidth(line)),
-    0
-  );
-  const horizontalLine = "┌" + "─".repeat(maxLength + 2) + "┐";
-  const verticalLine = "│ ";
-
-  console.log(chalk.gray(horizontalLine));
-  lines.forEach((line: string) => {
-    const displayLength = stringWidth(line);
-    console.log(
-      chalk.gray(
-        verticalLine + line + " ".repeat(maxLength - displayLength) + " │"
-      )
-    );
-  });
-  console.log(chalk.gray("└" + "─".repeat(maxLength + 2) + "┘"));
+let toolsDict: Record<
+  string,
+  {
+    shortName: string;
+    toolFn: (args: any) => Promise<any>;
+    previewFn: (args: any) => void;
+  }
+> = {
+  executeBashCommand: {
+    shortName: "Bash",
+    toolFn: async (args: any) => {
+      const command = args.command;
+      return await execBash(command);
+    },
+    previewFn: (args: any) => {
+      displayBoxedText(args.command);
+    },
+  },
+  executeNodeCode: {
+    toolFn: async (args: any) => {
+      const code = args.code;
+      const tempDir = path.join(process.cwd(), "./");
+      return await executeNodeJsCode(code, tempDir);
+    },
+    shortName: "Node.js",
+    previewFn: (args: any) => {
+      displayBoxedText(args.code);
+    },
+  },
+  saveToFile: {
+    shortName: "Saving",
+    previewFn: (args: any) => {
+      displayBoxedText(
+        `Saving to ${args.path}:\n-------------\n${args.code}...`
+      );
+    },
+    toolFn: async (args: any) => {
+      const code = args.code;
+      const filepath = args.filepath as string;
+      const filePath = filepath.startsWith("/")
+        ? filepath
+        : path.join("./", filepath);
+      await fs.writeFile(filePath, code);
+      return {
+        stdout: `File saved to ${filePath}`,
+        stderr: "",
+        success: true,
+      };
+    },
+  },
+  readTextFile: {
+    shortName: "Read File",
+    previewFn: (args: any) => {
+      displayBoxedText(`Reading file ${args.filepath}`);
+    },
+    toolFn: async (args: any) => {
+      const filepath = args.filepath as string;
+      const filePath = filepath.startsWith("/")
+        ? filepath
+        : path.join("./", filepath);
+      try {
+        console.log(`Reading file ${filePath}`);
+        const data = await fs.readFile(filePath, "utf8");
+        console.log(data);
+        return {
+          stdout: data,
+          stderr: "",
+          success: true,
+        };
+      } catch (error) {
+        return {
+          stdout: "",
+          stderr: `Error reading file ${filePath}: ${error.message}`,
+          success: false,
+        };
+      }
+    },
+  },
 };
 
 const main = async () => {
@@ -297,21 +288,21 @@ const main = async () => {
       const functionCalls = (await response.response).functionCalls() || [];
 
       for (const functionCall of functionCalls) {
-        if (functionCall.name === "executeBashCommand") {
-          const args: any = functionCall.args;
-          const command = args.command;
+        let tool = toolsDict[functionCall.name];
+        const args: any = functionCall.args;
+        if (tool) {
           // Ask for user confirmation
-          console.log(`\nBash command to execute:\n`);
-          displayBoxedText(command);
+          console.log(`\n${tool.shortName} to execute:\n`);
+          tool.previewFn(args);
           const confirmation = await ask(
-            `\nExecute this Bash command? (y/n): `
+            `\nExecute this ${tool.shortName} script? (y/n): `
           );
 
           if (sayingOk(confirmation)) {
-            console.log(chalk.gray(`\nExecuting bash command...`));
+            console.log(chalk.gray(`\nExecuting ${tool.shortName} command...`));
 
             try {
-              const { stdout, stderr } = await execBash(command);
+              const { stdout, stderr } = await tool.toolFn(args);
               const result = { stdout, stderr, success: true };
               if (result.success) {
                 console.log(chalk.green("运行成功."));
@@ -337,54 +328,14 @@ const main = async () => {
             nextQuestion = `用户拒绝了这条命令: (${confirmation}), 尝试改进一下方案.`;
             continue outerWhile;
           }
-        } else if (functionCall.name === "executeNodeCode") {
-          const args: any = functionCall.args;
-          const code = args.code;
-
-          // Ask for user confirmation
-          // Display code with syntax highlighting and ask for confirmation
-          console.log(chalk.gray("\nNode.js code to execute:"));
-          displayBoxedText(code);
-          const confirmation = await ask(
-            `\nExecute this Node.js code? (y/n): `
+        } else {
+          console.log(
+            chalk.red(
+              `\n\nError: Unsupported function call ${functionCall.name}`
+            )
           );
-
-          if (sayingOk(confirmation)) {
-            console.log(chalk.gray(`\nExecuting Node.js code...`));
-
-            try {
-              // Execute the code
-              const tempDir = path.join(process.cwd(), "./");
-              const { stdout, stderr } = await executeNodeJsCode(code, tempDir);
-
-              const output = {
-                stdout,
-                stderr,
-                success: true,
-              };
-              if (output.success) {
-                console.log(chalk.green("运行成功."));
-              } else {
-                console.log(chalk.red("运行失败\n" + output.stderr));
-              }
-
-              nextQuestion = JSON.stringify(output);
-              continue outerWhile;
-            } catch (error) {
-              const output = {
-                stdout: "",
-                stderr: error.message || String(error),
-                success: false,
-              };
-              console.log("\n");
-              console.log("Code execution failed:", output);
-              nextQuestion = `Node.js 代码执行失败: ${output.stderr}, 你能否改进一下方案?`;
-              continue outerWhile;
-            }
-          } else {
-            nextQuestion = `用户拒绝了这段代码: (${confirmation}), 尝试改进一下方案.`;
-            continue outerWhile;
-          }
+          nextQuestion = `不支持的函数调用: ${functionCall.name}, 你能否改进一下方案?`;
+          continue outerWhile;
         }
       }
     }
