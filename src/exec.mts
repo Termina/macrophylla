@@ -45,6 +45,11 @@ export const executeNodeJsCode = async (
   const result = await new Promise<{ stdout: string; stderr: string }>(
     (resolve, reject) => {
       child.on("close", (code) => {
+        // Clean up the temporary file, asynchronously
+        fs.unlink(tempFilePath).catch((err) =>
+          console.error("Failed to delete temp file:", err)
+        );
+
         if (code === 0 || code === null) {
           resolve({ stdout, stderr });
         } else {
@@ -55,11 +60,6 @@ export const executeNodeJsCode = async (
       child.on("error", reject);
     }
   );
-
-  // Clean up the temporary file
-  await fs
-    .unlink(tempFilePath)
-    .catch((err) => console.error("Failed to delete temp file:", err));
 
   return result;
 };
