@@ -13,9 +13,12 @@ import { execSync } from "child_process";
 import chalk from "chalk";
 import { execBash, executeNodeJsCode } from "./exec.mjs";
 import { displayBoxedText } from "./util.mjs";
+import { GoogleGenAI } from "@google/genai";
 
 // Initialize the Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const aiNew = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+
 const model = genAI.getGenerativeModel(
   // { model: "gemini-1.5-flash" },
   { model: "gemini-2.0-flash-lite" },
@@ -30,6 +33,7 @@ const getContextReminder = () => {
     "2. 使用 executeNodeCode 执行 Node.js 代码\n" +
     "3. 使用 saveToFile 保存输出到文件\n" +
     "4. 使用 readTextFile 读取文件内容\n" +
+    "5. 使用 groundSearch 搜索最新信息\n" +
     "请在每次回答时都考虑使用这些工具来帮助用户。"
   );
 };
@@ -109,6 +113,7 @@ const tools: Tool[] = [
                 "the path to save the file, relative to the current working directory",
             },
           },
+          required: ["code", "filepath"],
         },
       },
       {
@@ -124,6 +129,22 @@ const tools: Tool[] = [
                 "the path to read, relative to the current working directory",
             },
           },
+          required: ["filepath"],
+        },
+      },
+      {
+        name: "groundSearch",
+        description:
+          "search the web for the latest information, with gemini groundSearch",
+        parameters: {
+          type: SchemaType.OBJECT,
+          properties: {
+            query: {
+              type: SchemaType.STRING,
+              description: "The search query",
+            },
+          },
+          required: ["query"],
         },
       },
     ],
@@ -203,6 +224,54 @@ let toolsDict: Record<
         return {
           stdout: "",
           stderr: `Error reading file ${filePath}: ${error.message}`,
+          success: false,
+        };
+      }
+    },
+  },
+  groundSearch: {
+    shortName: "Ground Search",
+    previewFn: (args: any) => {
+      displayBoxedText(`Searching the web for ${args.query}`);
+    },
+    toolFn: async (args: any) => {
+      const query = args.query as string;
+      console.log(`Searching the web for ${query}`);
+
+      try {
+        const response = await aiNew.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [query],
+          config: {
+            tools: [{ googleSearch: {} }],
+            httpOptions: {
+              baseUrl: "https://sf.chenyong.life",
+            },
+          },
+        });
+        let result = response.text;
+        console.log(chalk.gray(result));
+        // To get grounding metadata as web content.
+        // response?.candidates?.[0].groundingMetadata?.searchEntryPoint
+        //   ?.renderedContent;
+        if (result) {
+          return {
+            stdout: result,
+            stderr: "",
+            success: true,
+          };
+        } else {
+          return {
+            stdout: "",
+            stderr: "No result found.",
+            success: false,
+          };
+        }
+      } catch (err) {
+        console.error("Error:", err);
+        return {
+          stdout: "",
+          stderr: `Error searching the web: ${err.message}`,
           success: false,
         };
       }
