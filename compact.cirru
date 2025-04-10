@@ -125,20 +125,10 @@
                     router-data $ :data router
                   div
                     {} $ :class-name (str-spaced css/preset css/global css/fullscreen css/column)
-                    comp-navigation (:logged-in? store) (:count store)
+                    memof1-call comp-navigation (:logged-in? store) (:count store)
                     if (:logged-in? store)
                       case-default (:name router) (<> router)
-                        :home $ div
-                          {} (:class-name css/expand)
-                            :style $ {} (:padding "\"8px")
-                          input $ {} (:class-name css/input)
-                            :value $ :demo state
-                          =< 8 nil
-                          <> "\"demo page"
-                          pre $ {}
-                            :style $ {} (:line-height 1.4) (:padding 4)
-                              :border $ str "\"1px solid #ddd"
-                            :inner-text $ str "\"backend data" (format-cirru-edn store)
+                        :home $ comp-main-ui (>> states :home)
                         :profile $ comp-profile (:user store) (:data router)
                       comp-login $ >> states :login
                     comp-status-color $ :color store
@@ -149,6 +139,19 @@
                       {}
                       fn (info d!) (d! :session/remove-message info)
                     when dev? $ comp-reel (:reel-length store) ({})
+        |comp-main-ui $ %{} :CodeEntry (:doc |)
+          :code $ quote
+            defn comp-main-ui (states)
+              let
+                  cursor $ :cursor states
+                  state $ :data states
+                div
+                  {}
+                    :class-name $ str-spaced css/expand css/column
+                    :style $ {} (:padding "\"8px")
+                  div $ {} (:class-name css/expand)
+                  textarea $ {} (:class-name css/textarea) (:placeholder "\"prompt for task..")
+                    :value $ :demo state
         |comp-offline $ %{} :CodeEntry (:doc |)
           :code $ quote
             defcomp comp-offline (mark)
@@ -192,7 +195,7 @@
             respo.util.format :refer $ hsl
             respo-ui.core :as ui
             respo-ui.css :as css
-            respo.core :refer $ defcomp <> >> div span button input pre
+            respo.core :refer $ defcomp <> >> div span button input pre textarea
             respo.css :refer $ defstyle
             respo.comp.inspect :refer $ comp-inspect
             respo.comp.space :refer $ =<
@@ -204,6 +207,7 @@
             app.config :refer $ dev?
             app.schema :as schema
             app.config :as config
+            memof.once :refer $ memof1-call
     |app.comp.login $ %{} :FileEntry
       :defs $ {}
         |comp-login $ %{} :CodeEntry (:doc |)
