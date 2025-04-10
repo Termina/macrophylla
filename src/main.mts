@@ -45,9 +45,7 @@ const rl = readline.createInterface({
 
 const ask = (question: string, seperator: boolean = false) => {
   if (seperator) {
-    console.log(
-      chalk.gray("\n-------------------------------------------------")
-    );
+    console.log(chalk.gray("\n" + "─".repeat(50)));
   }
   return new Promise<string>((resolve) => {
     rl.question(chalk.cyan(question), (answer) => {
