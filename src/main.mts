@@ -19,10 +19,12 @@ import { GoogleGenAI } from "@google/genai";
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const aiNew = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
+const geminiBaseUrl = process.env.GEMINI_BASE_URL;
+
 const model = genAI.getGenerativeModel(
   // { model: "gemini-1.5-flash" },
   { model: "gemini-2.0-flash-lite" },
-  { baseUrl: "https://sf.chenyong.life" }
+  { baseUrl: geminiBaseUrl }
 );
 
 // 添加一个函数来生成上下文提醒
@@ -288,7 +290,7 @@ let toolsDict: Record<
           config: {
             tools: [{ googleSearch: {} }],
             httpOptions: {
-              baseUrl: "https://sf.chenyong.life",
+              baseUrl: geminiBaseUrl,
             },
           },
         });
