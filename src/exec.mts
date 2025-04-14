@@ -1,6 +1,10 @@
 import { exec, execFile } from "child_process";
 import path from "path";
 import fs from "fs/promises";
+import { unlinkSync } from "fs";
+import chalk from "chalk";
+
+let nodeFileToClear: string | null = null;
 
 // Define function to execute Node.js code
 export const executeNodeJsCode = async (
@@ -20,6 +24,7 @@ export const executeNodeJsCode = async (
   // Create a temporary file with the code
   const tempFilePath = path.join(tempDir, `exec_${Date.now()}.mjs`);
   await fs.writeFile(tempFilePath, code);
+  nodeFileToClear = tempFilePath;
   // Execute the file as an ES module
   const child = execFile("node", ["--experimental-modules", tempFilePath], {
     encoding: "utf8",
@@ -49,6 +54,7 @@ export const executeNodeJsCode = async (
         fs.unlink(tempFilePath).catch((err) =>
           console.error("Failed to delete temp file:", err)
         );
+        nodeFileToClear = null;
 
         if (code === 0 || code === null) {
           resolve({ stdout, stderr });
@@ -63,6 +69,19 @@ export const executeNodeJsCode = async (
 
   return result;
 };
+
+process.on("SIGINT", () => {
+  // Clean up the temporary file if it exists
+  if (nodeFileToClear) {
+    try {
+      unlinkSync(nodeFileToClear);
+      console.log(chalk.gray(`\nCleared temp file: ${nodeFileToClear}`));
+    } catch (err) {
+      console.error("Failed to delete temp file:", err);
+    }
+  }
+  process.exit(1); // Exit the process
+});
 
 export let execBash = async (
   command: string
