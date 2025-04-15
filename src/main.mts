@@ -14,6 +14,7 @@ import chalk from "chalk";
 import { execBash, executeNodeJsCode } from "./exec.mjs";
 import { displayBoxedText } from "./util.mjs";
 import { GoogleGenAI } from "@google/genai";
+import { handleChildSIGINT } from "./task-state.mjs";
 
 // Initialize the Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
@@ -43,6 +44,16 @@ const getContextReminder = () => {
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
+});
+
+rl.on("SIGINT", () => {
+  let hitChild = handleChildSIGINT();
+  if (hitChild) {
+    console.log(chalk.gray("\nReceived SIGINT signal, killed child process"));
+  } else {
+    rl.close();
+    process.exit(0);
+  }
 });
 
 const ask = (question: string, seperator: boolean = false) => {
@@ -372,10 +383,13 @@ const main = async () => {
     let messageCount = 0;
 
     outerWhile: while (true) {
+      if (nextQuestion) {
+        console.log(chalk.gray("\n" + nextQuestion + "\n"));
+      }
       let question =
         nextQuestion ||
         (await ask("\nWhat's the task: ", true)) ||
-        "继续, 或者规划接下来的任务";
+        "继续未完成的任务, 没有的话尝试建议接下来的任务";
 
       if (question.toLowerCase() === "exit") {
         console.log("\nBye!");
@@ -418,12 +432,11 @@ const main = async () => {
             console.log(chalk.gray(`\nExecuting ${tool.shortName} command...`));
 
             try {
-              const { stdout, stderr } = await tool.toolFn(args);
-              const result = { stdout, stderr, success: true };
-              if (result.success) {
-                console.log(chalk.green("运行成功."));
-              } else {
+              const result = await tool.toolFn(args);
+              if (result.stderr) {
                 console.log(chalk.red("运行失败\n" + result.stderr));
+              } else {
+                console.log(chalk.green("运行完成."));
               }
 
               nextQuestion = JSON.stringify(result);
