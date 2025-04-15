@@ -14,15 +14,18 @@ import chalk from "chalk";
 import { execBash, executeNodeJsCode } from "./exec.mjs";
 import { displayBoxedText } from "./util.mjs";
 import { GoogleGenAI } from "@google/genai";
+import { handleChildSIGINT } from "./task-state.mjs";
 
 // Initialize the Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 const aiNew = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
+const geminiBaseUrl = process.env.GEMINI_BASE_URL;
+
 const model = genAI.getGenerativeModel(
   // { model: "gemini-1.5-flash" },
   { model: "gemini-2.0-flash-lite" },
-  { baseUrl: "https://sf.chenyong.life" }
+  { baseUrl: geminiBaseUrl }
 );
 
 // 添加一个函数来生成上下文提醒
@@ -31,8 +34,8 @@ const getContextReminder = () => {
     "提醒: 你是一个命令行助手。你可以:\n" +
     "1. 使用 executeBashCommand 执行 bash 命令\n" +
     "2. 使用 executeNodeCode 执行 Node.js 代码\n" +
-    "3. 使用 saveToFile 保存输出到文件\n" +
-    "4. 使用 readTextFile 读取文件内容\n" +
+    "3. 使用 createMultipleFiles 同时创建多个文件\n" +
+    "4. 使用 readMultipleFiles 读取文件内容\n" +
     "5. 使用 groundSearch 搜索最新信息\n" +
     "请在每次回答时都考虑使用这些工具来帮助用户。"
   );
@@ -43,11 +46,19 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
+rl.on("SIGINT", () => {
+  let hitChild = handleChildSIGINT();
+  if (hitChild) {
+    console.log(chalk.gray("\nReceived SIGINT signal, killed child process"));
+  } else {
+    rl.close();
+    process.exit(0);
+  }
+});
+
 const ask = (question: string, seperator: boolean = false) => {
   if (seperator) {
-    console.log(
-      chalk.gray("\n-------------------------------------------------")
-    );
+    console.log(chalk.gray("\n" + "─".repeat(50)));
   }
   return new Promise<string>((resolve) => {
     rl.question(chalk.cyan(question), (answer) => {
@@ -97,39 +108,51 @@ const tools: Tool[] = [
         },
       },
       {
-        name: "saveToFile",
+        name: "createMultipleFiles",
         description:
-          "save the output to a path based on the current working directory",
+          "create multiple files called entries, on the current working directory",
         parameters: {
           type: SchemaType.OBJECT,
           properties: {
-            code: {
-              type: SchemaType.STRING,
-              description: "any code that you want to save to file",
-            },
-            filepath: {
-              type: SchemaType.STRING,
-              description:
-                "the path to save the file, relative to the current working directory",
+            entries: {
+              description: "an array of entries to create",
+              type: SchemaType.ARRAY,
+              items: {
+                type: SchemaType.OBJECT,
+                properties: {
+                  code: {
+                    type: SchemaType.STRING,
+                    description: "any code that you want to save to file",
+                  },
+                  filepath: {
+                    type: SchemaType.STRING,
+                    description:
+                      "the path to save the file, relative to the current working directory",
+                  },
+                },
+                required: ["code", "filepath"],
+              },
             },
           },
-          required: ["code", "filepath"],
         },
       },
       {
-        name: "readTextFile",
+        name: "readMultipleFiles",
         description:
-          "read a text file and return the content(utf8). it can access the file system. also called '读取文本文件'",
+          "read multiple files in utf8. it can access the file system. also called '读取文本文件'",
         parameters: {
           type: SchemaType.OBJECT,
           properties: {
-            filepath: {
-              type: SchemaType.STRING,
-              description:
-                "the path to read, relative to the current working directory",
+            entries: {
+              type: SchemaType.ARRAY,
+              description: "an array of entries to read",
+              items: {
+                type: SchemaType.STRING,
+                description:
+                  "the path to read, relative to the current working directory",
+              },
             },
           },
-          required: ["filepath"],
         },
       },
       {
@@ -180,53 +203,86 @@ let toolsDict: Record<
       displayBoxedText(args.code);
     },
   },
-  saveToFile: {
-    shortName: "Saving",
+  createMultipleFiles: {
+    shortName: "batch create/save files",
     previewFn: (args: any) => {
-      displayBoxedText(
-        `Saving to ${args.path}:\n-------------\n${args.code}...`
-      );
+      let entries = args.entries as Array<{
+        code: string;
+        filepath: string;
+      }>;
+      let previews = entries
+        .map((entry) => {
+          return `File: ${chalk.yellow(
+            entry.filepath
+          )}\n-------------\nCode:\n${entry.code}`;
+        })
+        .join("\n--------------\n");
+      displayBoxedText(previews);
     },
     toolFn: async (args: any) => {
-      const code = args.code;
-      const filepath = args.filepath as string;
-      const filePath = filepath.startsWith("/")
-        ? filepath
-        : path.join("./", filepath);
-      await fs.writeFile(filePath, code);
+      let entries = args.entries as Array<{
+        code: string;
+        filepath: string;
+      }>;
+      let results = await Promise.allSettled(
+        entries.map(async (entry) => {
+          const code = entry.code;
+          const filepath = entry.filepath as string;
+
+          const filePath = filepath.startsWith("/")
+            ? filepath
+            : path.join("./", filepath);
+
+          // Ensure the directory exists
+          const dirPath = path.dirname(filePath);
+          await fs.mkdir(dirPath, { recursive: true });
+          // The recursive option means it won't error if directory already exists
+          console.log(chalk.gray(`Ensured directory exists: ${dirPath}`));
+
+          console.log(`created ${filePath}`);
+          await fs.writeFile(filePath, code);
+          return `Created ${filePath}.`;
+        })
+      );
       return {
-        stdout: `File saved to ${filePath}`,
+        stdout: results
+          .map((result) => {
+            if (result.status === "fulfilled") {
+              return result.value;
+            } else {
+              return `Error saving file: ${result.reason}`;
+            }
+          })
+          .join("\n"),
         stderr: "",
-        success: true,
+        success: results.every((result) => result.status === "fulfilled"),
       };
     },
   },
-  readTextFile: {
-    shortName: "Read File",
+  readMultipleFiles: {
+    shortName: "batch multiple files",
     previewFn: (args: any) => {
-      displayBoxedText(`Reading file ${args.filepath}`);
+      displayBoxedText(`Reading file ${args.entries.join(", ")}`);
     },
     toolFn: async (args: any) => {
-      const filepath = args.filepath as string;
-      const filePath = filepath.startsWith("/")
-        ? filepath
-        : path.join("./", filepath);
-      try {
-        console.log(`Reading file ${filePath}`);
-        const data = await fs.readFile(filePath, "utf8");
-        console.log(data);
-        return {
-          stdout: data,
-          stderr: "",
-          success: true,
-        };
-      } catch (error) {
-        return {
-          stdout: "",
-          stderr: `Error reading file ${filePath}: ${error.message}`,
-          success: false,
-        };
-      }
+      let entries = args.entries as Array<string>;
+      let results = await Promise.allSettled(
+        entries.map(async (entry) => {
+          const filepath = entry as string;
+          const filePath = filepath.startsWith("/")
+            ? filepath
+            : path.join("./", filepath);
+          console.log(`Reading file ${filePath}`);
+          const data = await fs.readFile(filePath, "utf8");
+          return data;
+        })
+      );
+
+      return {
+        stdout: JSON.stringify(results),
+        stderr: "",
+        success: results.every((result) => result.status === "fulfilled"),
+      };
     },
   },
   groundSearch: {
@@ -245,7 +301,7 @@ let toolsDict: Record<
           config: {
             tools: [{ googleSearch: {} }],
             httpOptions: {
-              baseUrl: "https://sf.chenyong.life",
+              baseUrl: geminiBaseUrl,
             },
           },
         });
@@ -327,8 +383,13 @@ const main = async () => {
     let messageCount = 0;
 
     outerWhile: while (true) {
+      if (nextQuestion) {
+        console.log(chalk.gray("\n" + nextQuestion + "\n"));
+      }
       let question =
-        nextQuestion || (await ask("\nWhat's the task: ", true)) || "继续";
+        nextQuestion ||
+        (await ask("\nWhat's the task: ", true)) ||
+        "继续未完成的任务, 没有的话尝试建议接下来的任务";
 
       if (question.toLowerCase() === "exit") {
         console.log("\nBye!");
@@ -371,12 +432,11 @@ const main = async () => {
             console.log(chalk.gray(`\nExecuting ${tool.shortName} command...`));
 
             try {
-              const { stdout, stderr } = await tool.toolFn(args);
-              const result = { stdout, stderr, success: true };
-              if (result.success) {
-                console.log(chalk.green("运行成功."));
-              } else {
+              const result = await tool.toolFn(args);
+              if (result.stderr) {
                 console.log(chalk.red("运行失败\n" + result.stderr));
+              } else {
+                console.log(chalk.green("运行完成."));
               }
 
               nextQuestion = JSON.stringify(result);
