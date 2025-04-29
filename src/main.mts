@@ -17,7 +17,8 @@ import { nodejsScriptTool } from "./tools/nodejs-script.mjs";
 import { filesWriteTool } from "./tools/files-read.mjs";
 import { filesReadTool } from "./tools/files-write.mjs";
 import { googleSearchTool } from "./tools/google-search.mjs";
-import { MacrophyllaTool } from "tools/type.mjs";
+import { MacrophyllaTool } from "./tools/type.mjs";
+import { currentDirTool } from "./tools/current-dir.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -34,6 +35,7 @@ const toolContextPrompt = () => {
 
   return (
     "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都考虑一下, 这些工具来帮助用户, 如果可以就调用:\n" +
+    "- 使用 current_dir tool 获取当前目录信息\n" +
     "- 使用 bash_command tool 执行 bash 命令\n" +
     "- 使用 nodejs_script tool 执行 Node.js 代码\n" +
     "- 使用 write_files tool 同时创建多个文件\n" +
@@ -84,6 +86,7 @@ let toolsDict: Record<string, MacrophyllaTool> = {
   [filesReadTool.declaration.name!]: filesReadTool,
   [filesWriteTool.declaration.name!]: filesWriteTool,
   [googleSearchTool.declaration.name!]: googleSearchTool,
+  [currentDirTool.declaration.name!]: currentDirTool,
 };
 
 const main = async () => {
@@ -106,6 +109,7 @@ const main = async () => {
           filesWriteTool.declaration,
           filesWriteTool.declaration,
           googleSearchTool.declaration,
+          currentDirTool.declaration,
         ],
       },
     ];
