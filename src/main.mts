@@ -1,43 +1,37 @@
-import {
-  GoogleGenerativeAI,
-  FunctionCallingMode,
-  Tool,
-  SchemaType,
-  ToolConfig,
-} from "@google/generative-ai";
 import os from "os";
 import * as readline from "readline";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { execSync } from "child_process";
 import chalk from "chalk";
-import { execBash, executeNodeJsCode } from "./exec.mjs";
-import { displayBoxedText } from "./util.mjs";
-import { GoogleGenAI } from "@google/genai";
-import { handleChildSIGINT } from "./task-state.mjs";
+import {
+  FunctionCallingConfigMode,
+  FunctionDeclaration,
+  GoogleGenAI,
+  Tool,
+  ToolConfig,
+  Type,
+} from "@google/genai";
+
+import { handleChildSIGINT } from "./tools/task-state.mjs";
+import { bashCommandTool } from "./tools/bash-commad.mjs";
+import { nodejsScriptTool } from "./tools/nodejs-script.mjs";
+import { filesReadTool } from "./tools/files-read.mjs";
+import { filesWriteTool } from "./tools/files-write.mjs";
+import { googleSearchTool } from "./tools/google-search.mjs";
 
 // Initialize the Generative AI client
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const aiNew = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 const geminiBaseUrl = process.env.GEMINI_BASE_URL;
-
-const model = genAI.getGenerativeModel(
-  // { model: "gemini-1.5-flash" },
-  { model: "gemini-2.0-flash-lite" },
-  { baseUrl: geminiBaseUrl }
-);
 
 // 添加一个函数来生成上下文提醒
 const getContextReminder = () => {
   return (
-    "提醒: 你是一个命令行助手。你可以:\n" +
+    "提醒: 你是一个命令行助手, 请在每次回答时都考虑一下, 这些工具来帮助用户, 如果可以就调用:\n" +
     "1. 使用 executeBashCommand 执行 bash 命令\n" +
     "2. 使用 executeNodeCode 执行 Node.js 代码\n" +
     "3. 使用 createMultipleFiles 同时创建多个文件\n" +
     "4. 使用 readMultipleFiles 读取文件内容\n" +
-    "5. 使用 groundSearch 搜索最新信息\n" +
-    "请在每次回答时都考虑使用这些工具来帮助用户。"
+    "5. 使用 groundSearch 搜索最新信息\n"
   );
 };
 
@@ -73,266 +67,20 @@ const sayingOk = (message: string) => {
   );
 };
 
-const tools: Tool[] = [
-  {
-    functionDeclarations: [
-      {
-        name: "executeBashCommand",
-        description:
-          "provide bash command, run in system, and return the output. it can access file system. also called 'bash 脚本'",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            command: {
-              type: SchemaType.STRING,
-              description: "The bash command to execute",
-            },
-          },
-          required: ["command"],
-        },
-      },
-      {
-        name: "executeNodeCode",
-        description:
-          "provide node.js script in ES Module syntax. Execute in system and return the output. it can access the file system. also called 'node.js 脚本'",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            code: {
-              type: SchemaType.STRING,
-              description:
-                "The Node.js code to execute. Must use ES module syntax. Write self-contained code that doesn't depend on external files.",
-            },
-          },
-          required: ["code"],
-        },
-      },
-      {
-        name: "createMultipleFiles",
-        description:
-          "create multiple files called entries, on the current working directory",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            entries: {
-              description: "an array of entries to create",
-              type: SchemaType.ARRAY,
-              items: {
-                type: SchemaType.OBJECT,
-                properties: {
-                  code: {
-                    type: SchemaType.STRING,
-                    description: "any code that you want to save to file",
-                  },
-                  filepath: {
-                    type: SchemaType.STRING,
-                    description:
-                      "the path to save the file, relative to the current working directory",
-                  },
-                },
-                required: ["code", "filepath"],
-              },
-            },
-          },
-        },
-      },
-      {
-        name: "readMultipleFiles",
-        description:
-          "read multiple files in utf8. it can access the file system. also called '读取文本文件'",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            entries: {
-              type: SchemaType.ARRAY,
-              description: "an array of entries to read",
-              items: {
-                type: SchemaType.STRING,
-                description:
-                  "the path to read, relative to the current working directory",
-              },
-            },
-          },
-        },
-      },
-      {
-        name: "groundSearch",
-        description:
-          "search the web for the latest information, with gemini groundSearch",
-        parameters: {
-          type: SchemaType.OBJECT,
-          properties: {
-            query: {
-              type: SchemaType.STRING,
-              description: "The search query",
-            },
-          },
-          required: ["query"],
-        },
-      },
-    ],
-  },
-];
-
 let toolsDict: Record<
   string,
   {
     shortName: string;
     toolFn: (args: any) => Promise<any>;
     previewFn: (args: any) => void;
+    declaration: FunctionDeclaration;
   }
 > = {
-  executeBashCommand: {
-    shortName: "Bash",
-    toolFn: async (args: any) => {
-      const command = args.command;
-      return await execBash(command);
-    },
-    previewFn: (args: any) => {
-      displayBoxedText(args.command);
-    },
-  },
-  executeNodeCode: {
-    toolFn: async (args: any) => {
-      const code = args.code;
-      const tempDir = path.join(process.cwd(), "./");
-      return await executeNodeJsCode(code, tempDir);
-    },
-    shortName: "Node.js",
-    previewFn: (args: any) => {
-      displayBoxedText(args.code);
-    },
-  },
-  createMultipleFiles: {
-    shortName: "batch create/save files",
-    previewFn: (args: any) => {
-      let entries = args.entries as Array<{
-        code: string;
-        filepath: string;
-      }>;
-      let previews = entries
-        .map((entry) => {
-          return `File: ${chalk.yellow(
-            entry.filepath
-          )}\n-------------\nCode:\n${entry.code}`;
-        })
-        .join("\n--------------\n");
-      displayBoxedText(previews);
-    },
-    toolFn: async (args: any) => {
-      let entries = args.entries as Array<{
-        code: string;
-        filepath: string;
-      }>;
-      let results = await Promise.allSettled(
-        entries.map(async (entry) => {
-          const code = entry.code;
-          const filepath = entry.filepath as string;
-
-          const filePath = filepath.startsWith("/")
-            ? filepath
-            : path.join("./", filepath);
-
-          // Ensure the directory exists
-          const dirPath = path.dirname(filePath);
-          await fs.mkdir(dirPath, { recursive: true });
-          // The recursive option means it won't error if directory already exists
-          console.log(chalk.gray(`Ensured directory exists: ${dirPath}`));
-
-          console.log(`created ${filePath}`);
-          await fs.writeFile(filePath, code);
-          return `Created ${filePath}.`;
-        })
-      );
-      return {
-        stdout: results
-          .map((result) => {
-            if (result.status === "fulfilled") {
-              return result.value;
-            } else {
-              return `Error saving file: ${result.reason}`;
-            }
-          })
-          .join("\n"),
-        stderr: "",
-        success: results.every((result) => result.status === "fulfilled"),
-      };
-    },
-  },
-  readMultipleFiles: {
-    shortName: "batch multiple files",
-    previewFn: (args: any) => {
-      displayBoxedText(`Reading file ${args.entries.join(", ")}`);
-    },
-    toolFn: async (args: any) => {
-      let entries = args.entries as Array<string>;
-      let results = await Promise.allSettled(
-        entries.map(async (entry) => {
-          const filepath = entry as string;
-          const filePath = filepath.startsWith("/")
-            ? filepath
-            : path.join("./", filepath);
-          console.log(`Reading file ${filePath}`);
-          const data = await fs.readFile(filePath, "utf8");
-          return data;
-        })
-      );
-
-      return {
-        stdout: JSON.stringify(results),
-        stderr: "",
-        success: results.every((result) => result.status === "fulfilled"),
-      };
-    },
-  },
-  groundSearch: {
-    shortName: "Ground Search",
-    previewFn: (args: any) => {
-      displayBoxedText(`Searching the web for ${args.query}`);
-    },
-    toolFn: async (args: any) => {
-      const query = args.query as string;
-      console.log(`Searching the web for ${query}`);
-
-      try {
-        const response = await aiNew.models.generateContent({
-          model: "gemini-2.0-flash",
-          contents: [query],
-          config: {
-            tools: [{ googleSearch: {} }],
-            httpOptions: {
-              baseUrl: geminiBaseUrl,
-            },
-          },
-        });
-        let result = response.text;
-        console.log(chalk.gray(result));
-        // To get grounding metadata as web content.
-        // response?.candidates?.[0].groundingMetadata?.searchEntryPoint
-        //   ?.renderedContent;
-        if (result) {
-          return {
-            stdout: result,
-            stderr: "",
-            success: true,
-          };
-        } else {
-          return {
-            stdout: "",
-            stderr: "No result found.",
-            success: false,
-          };
-        }
-      } catch (err) {
-        console.error("Error:", err);
-        return {
-          stdout: "",
-          stderr: `Error searching the web: ${err.message}`,
-          success: false,
-        };
-      }
-    },
-  },
+  executeBashCommand: bashCommandTool,
+  executeNodeCode: nodejsScriptTool,
+  createMultipleFiles: filesReadTool,
+  readMultipleFiles: filesReadTool,
+  groundSearch: googleSearchTool,
 };
 
 const main = async () => {
@@ -349,28 +97,44 @@ const main = async () => {
     // Configure tool settings
     const toolConfig: ToolConfig = {
       functionCallingConfig: {
-        mode: FunctionCallingMode.AUTO, // Let the model decide when to call the function
+        mode: FunctionCallingConfigMode.AUTO, // Let the model decide when to call the function
       },
     };
 
+    let tools: Tool[] = [
+      {
+        functionDeclarations: [
+          bashCommandTool.declaration,
+          nodejsScriptTool.declaration,
+          filesReadTool.declaration,
+          filesWriteTool.declaration,
+          googleSearchTool.declaration,
+        ],
+      },
+    ];
+
     // Create a chat session with the defined tool
-    const chat = model.startChat({
-      tools,
-      toolConfig,
+    const chat = genAi.chats.create({
+      model: "gemini-2.0-flash-lite",
+      config: {
+        httpOptions: {
+          baseUrl: geminiBaseUrl,
+        },
+        tools,
+        toolConfig,
+      },
       history: [
         {
           role: "user",
           parts: [
             {
               text:
-                "系统初始化配置:\n" +
-                "1. 你是一个专业的命令行助手，工作在当前进程目录下\n" +
-                "2. 你可以调用 executeBashCommand 执行 bash 命令\n" +
-                "3. 你可以调用 executeNodeCode 执行 Node.js 代码\n" +
-                "4. 每次回答都应该考虑使用这些工具收集信息\n" +
-                "5. 使用中文回复，但代码保持英文\n" +
-                "6. 失败时要理解上下文并优化重试\n" +
-                `当前系统信息: ${osInfo}\n` +
+                "你是一个命令行助手，每次回答都可以考虑是否有合适的工具可以提供帮助, 如果可以, 调用工具来解答. 系统初始化配置:\n" +
+                "- 你可以调用 executeBashCommand 执行 bash 命令\n" +
+                "- 你可以调用 executeNodeCode 执行 Node.js 代码\n" +
+                "也可以使用这些工具收集相关信息用于后续回复\n" +
+                "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用.\n" +
+                `你并不是完全隔离在沙箱当中的, 调用 nodejs 可以完成大量任务. 当前系统信息: ${osInfo}\n` +
                 `Node.js 信息: ${nodeInfo}\n` +
                 `Bash 信息: ${bashInfo}`,
             },
@@ -389,7 +153,7 @@ const main = async () => {
       let question =
         nextQuestion ||
         (await ask("\nWhat's the task: ", true)) ||
-        "继续未完成的任务, 没有的话尝试建议接下来的任务";
+        "继续上一个会话的计划";
 
       if (question.toLowerCase() === "exit") {
         console.log("\nBye!");
@@ -406,67 +170,79 @@ const main = async () => {
       console.log(chalk.gray("\nResponding...\n"));
 
       // Use the chat API to send messages and get streaming responses
-      const response = await chat.sendMessageStream(question);
-      for await (const chunk of response.stream) {
-        process.stdout.write(chunk.text());
+      const response = await chat.sendMessageStream({ message: question });
+      for await (const chunk of response) {
+        let responseMessage = chunk.text;
+        let responseFunctionCalls =
+          chunk.functionCalls != null && chunk.functionCalls.length > 0
+            ? chunk.functionCalls
+            : undefined;
+
+        if (responseMessage != null) {
+          process.stdout.write(responseMessage);
+        }
+        if (responseFunctionCalls) {
+          for (const functionCall of responseFunctionCalls) {
+            let tool = toolsDict[functionCall.name!];
+            const args: any = functionCall.args;
+            if (tool) {
+              // Ask for user confirmation
+              console.log(`\n${tool.shortName} to execute:\n`);
+              tool.previewFn(args);
+              const confirmation = await ask(
+                `\nExecute this ${tool.shortName} script? (y/n): `
+              );
+
+              if (sayingOk(confirmation)) {
+                console.log(
+                  chalk.gray(`\nExecuting ${tool.shortName} command...`)
+                );
+
+                try {
+                  const result = await tool.toolFn(args);
+                  if (result.stderr) {
+                    console.log(chalk.red("运行失败\n" + result.stderr));
+                  } else {
+                    console.log(chalk.green("运行完成."));
+                  }
+
+                  nextQuestion = JSON.stringify(result);
+                  continue outerWhile;
+                } catch (error) {
+                  const result = {
+                    stdout: error.stdout || "",
+                    stderr: error.stderr || error.message,
+                    success: false,
+                  };
+                  console.log("\n");
+                  console.log("Command failed:", result);
+
+                  nextQuestion = `命令执行过程当中失败: ${result.stderr}, 你能否改进一下方案?`;
+                  continue outerWhile;
+                }
+              } else {
+                nextQuestion = `用户拒绝了这条命令: (${confirmation}), 尝试改进一下方案.`;
+                continue outerWhile;
+              }
+            } else {
+              console.log(
+                chalk.red(
+                  `\n\nError: Unsupported function call ${functionCall.name}`
+                )
+              );
+              nextQuestion = `不支持的函数调用: ${functionCall.name}, 你能否改进一下方案?`;
+              continue outerWhile;
+            }
+          }
+        }
+
+        if (responseMessage == null && responseFunctionCalls == null) {
+          console.warn("unknown chunk:", chunk);
+        }
       }
 
       // clear the next question cache
       nextQuestion = "";
-
-      // Handle function calls if any
-      const functionCalls = (await response.response).functionCalls() || [];
-
-      for (const functionCall of functionCalls) {
-        let tool = toolsDict[functionCall.name];
-        const args: any = functionCall.args;
-        if (tool) {
-          // Ask for user confirmation
-          console.log(`\n${tool.shortName} to execute:\n`);
-          tool.previewFn(args);
-          const confirmation = await ask(
-            `\nExecute this ${tool.shortName} script? (y/n): `
-          );
-
-          if (sayingOk(confirmation)) {
-            console.log(chalk.gray(`\nExecuting ${tool.shortName} command...`));
-
-            try {
-              const result = await tool.toolFn(args);
-              if (result.stderr) {
-                console.log(chalk.red("运行失败\n" + result.stderr));
-              } else {
-                console.log(chalk.green("运行完成."));
-              }
-
-              nextQuestion = JSON.stringify(result);
-              continue outerWhile;
-            } catch (error) {
-              const result = {
-                stdout: error.stdout || "",
-                stderr: error.stderr || error.message,
-                success: false,
-              };
-              console.log("\n");
-              console.log("Command failed:", result);
-
-              nextQuestion = `命令执行过程当中失败: ${result.stderr}, 你能否改进一下方案?`;
-              continue outerWhile;
-            }
-          } else {
-            nextQuestion = `用户拒绝了这条命令: (${confirmation}), 尝试改进一下方案.`;
-            continue outerWhile;
-          }
-        } else {
-          console.log(
-            chalk.red(
-              `\n\nError: Unsupported function call ${functionCall.name}`
-            )
-          );
-          nextQuestion = `不支持的函数调用: ${functionCall.name}, 你能否改进一下方案?`;
-          continue outerWhile;
-        }
-      }
     }
   } catch (err) {
     console.error("Error:", err);

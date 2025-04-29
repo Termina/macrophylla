@@ -21,6 +21,14 @@ Macrophylla 是一个命令行助手，它使用 Gemini API 与用户交互，�
     - 用户: y
     - 助手: (执行命令，并将结果返回)
 
+### Debug
+
+Open node inspecter from Chrome to debug:
+
+```bash
+node --inspect --experimental-network-inspection bin.mjs
+```
+
 ### License
 
 MIT
