@@ -5,10 +5,29 @@ import path from "path";
 import { displayBoxedText } from "../util.mjs";
 import { MacrophyllaTool } from "./type.mjs";
 
-export let filesWriteTool: MacrophyllaTool = {
-  shortName: "batch multiple files",
+export let filesReadTool: MacrophyllaTool = {
+  shortName: "read multiple files",
   previewFn: (args: any) => {
     displayBoxedText(`Reading file ${args.entries.join(", ")}`);
+  },
+  declaration: {
+    name: "read_files",
+    description:
+      "read multiple files in utf8. it can access the file system. also called '读取文本文件'",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        entries: {
+          type: Type.ARRAY,
+          description: "an array of entries to read",
+          items: {
+            type: Type.STRING,
+            description:
+              "the path to read, relative to the current working directory",
+          },
+        },
+      },
+    },
   },
   toolFn: async (args: any) => {
     let entries = args.entries as Array<string>;
@@ -29,24 +48,5 @@ export let filesWriteTool: MacrophyllaTool = {
       stderr: "",
       success: results.every((result) => result.status === "fulfilled"),
     };
-  },
-  declaration: {
-    name: "readMultipleFiles",
-    description:
-      "read multiple files in utf8. it can access the file system. also called '读取文本文件'",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        entries: {
-          type: Type.ARRAY,
-          description: "an array of entries to read",
-          items: {
-            type: Type.STRING,
-            description:
-              "the path to read, relative to the current working directory",
-          },
-        },
-      },
-    },
   },
 };

@@ -14,9 +14,10 @@ import {
 import { handleChildSIGINT } from "./tools/task-state.mjs";
 import { bashCommandTool } from "./tools/bash-commad.mjs";
 import { nodejsScriptTool } from "./tools/nodejs-script.mjs";
-import { filesReadTool } from "./tools/files-read.mjs";
-import { filesWriteTool } from "./tools/files-write.mjs";
+import { filesWriteTool } from "./tools/files-read.mjs";
+import { filesReadTool } from "./tools/files-write.mjs";
 import { googleSearchTool } from "./tools/google-search.mjs";
+import { MacrophyllaTool } from "tools/type.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -24,14 +25,24 @@ const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const geminiBaseUrl = process.env.GEMINI_BASE_URL;
 
 // 添加一个函数来生成上下文提醒
-const getContextReminder = () => {
+const toolContextPrompt = () => {
+  let osInfo = `${process.platform}, 架构: ${process.arch}, CPU 核心数: ${
+    os.cpus().length
+  }.`;
+  let nodeInfo = `${process.version}, 当前目录: ${process.cwd()}.`;
+  let bashInfo = execSync("bash --version | head -n 1");
+
   return (
-    "提醒: 你是一个命令行助手, 请在每次回答时都考虑一下, 这些工具来帮助用户, 如果可以就调用:\n" +
-    "1. 使用 executeBashCommand 执行 bash 命令\n" +
-    "2. 使用 executeNodeCode 执行 Node.js 代码\n" +
-    "3. 使用 createMultipleFiles 同时创建多个文件\n" +
-    "4. 使用 readMultipleFiles 读取文件内容\n" +
-    "5. 使用 groundSearch 搜索最新信息\n"
+    "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都考虑一下, 这些工具来帮助用户, 如果可以就调用:\n" +
+    "- 使用 bash_command tool 执行 bash 命令\n" +
+    "- 使用 nodejs_script tool 执行 Node.js 代码\n" +
+    "- 使用 write_files tool 同时创建多个文件\n" +
+    "- 使用 read_files tool 读取文件内容\n" +
+    "- 使用 web_search tool 搜索最新信息\n" +
+    "\n" +
+    `你并不是完全隔离在沙箱当中的, 调用 nodejs 可以完成大量任务. 当前系统信息: ${osInfo}\n` +
+    `Node.js 信息: ${nodeInfo}\n` +
+    `Bash 信息: ${bashInfo}\n`
   );
 };
 
@@ -67,29 +78,15 @@ const sayingOk = (message: string) => {
   );
 };
 
-let toolsDict: Record<
-  string,
-  {
-    shortName: string;
-    toolFn: (args: any) => Promise<any>;
-    previewFn: (args: any) => void;
-    declaration: FunctionDeclaration;
-  }
-> = {
-  executeBashCommand: bashCommandTool,
-  executeNodeCode: nodejsScriptTool,
-  createMultipleFiles: filesReadTool,
-  readMultipleFiles: filesReadTool,
-  groundSearch: googleSearchTool,
+let toolsDict: Record<string, MacrophyllaTool> = {
+  [bashCommandTool.declaration.name!]: bashCommandTool,
+  [nodejsScriptTool.declaration.name!]: nodejsScriptTool,
+  [filesReadTool.declaration.name!]: filesReadTool,
+  [filesWriteTool.declaration.name!]: filesWriteTool,
+  [googleSearchTool.declaration.name!]: googleSearchTool,
 };
 
 const main = async () => {
-  let osInfo = `${process.platform}, 架构: ${process.arch}, CPU 核心数: ${
-    os.cpus().length
-  }.`;
-  let nodeInfo = `${process.version}, 当前目录: ${process.cwd()}.`;
-  let bashInfo = execSync("bash --version | head -n 1");
-
   try {
     // Create a chat session
     // Define a function declaration tool
@@ -106,7 +103,7 @@ const main = async () => {
         functionDeclarations: [
           bashCommandTool.declaration,
           nodejsScriptTool.declaration,
-          filesReadTool.declaration,
+          filesWriteTool.declaration,
           filesWriteTool.declaration,
           googleSearchTool.declaration,
         ],
@@ -122,21 +119,14 @@ const main = async () => {
         },
         tools,
         toolConfig,
+        temperature: 0.2,
       },
       history: [
         {
           role: "user",
           parts: [
             {
-              text:
-                "你是一个命令行助手，每次回答都可以考虑是否有合适的工具可以提供帮助, 如果可以, 调用工具来解答. 系统初始化配置:\n" +
-                "- 你可以调用 executeBashCommand 执行 bash 命令\n" +
-                "- 你可以调用 executeNodeCode 执行 Node.js 代码\n" +
-                "也可以使用这些工具收集相关信息用于后续回复\n" +
-                "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用.\n" +
-                `你并不是完全隔离在沙箱当中的, 调用 nodejs 可以完成大量任务. 当前系统信息: ${osInfo}\n` +
-                `Node.js 信息: ${nodeInfo}\n` +
-                `Bash 信息: ${bashInfo}`,
+              text: toolContextPrompt(),
             },
           ],
         },
@@ -162,8 +152,8 @@ const main = async () => {
       // 每隔 5 轮对话，插入上下文提醒
       messageCount++;
       if (messageCount % 10 === 0) {
-        const reminder = getContextReminder();
-        console.log(chalk.gray("\n\n" + reminder));
+        const reminder = "重要提醒: " + toolContextPrompt();
+        console.log(chalk.gray("\n\n(提醒)\n\n"));
         question = `${reminder}\n\n${question}`;
       }
 
@@ -189,9 +179,12 @@ const main = async () => {
               // Ask for user confirmation
               console.log(`\n${tool.shortName} to execute:\n`);
               tool.previewFn(args);
-              const confirmation = await ask(
-                `\nExecute this ${tool.shortName} script? (y/n): `
-              );
+              let confirmation = "ok";
+              if (!tool.skipConfirmation) {
+                confirmation = await ask(
+                  `\nExecute this ${tool.shortName} script? (y/n): `
+                );
+              }
 
               if (sayingOk(confirmation)) {
                 console.log(
@@ -206,7 +199,9 @@ const main = async () => {
                     console.log(chalk.green("运行完成."));
                   }
 
-                  nextQuestion = JSON.stringify(result);
+                  nextQuestion =
+                    "answer based previous command response:\n" +
+                    JSON.stringify(result);
                   continue outerWhile;
                 } catch (error) {
                   const result = {

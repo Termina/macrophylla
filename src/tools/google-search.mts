@@ -9,9 +9,25 @@ const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const geminiBaseUrl = process.env.GEMINI_BASE_URL;
 
 export let googleSearchTool: MacrophyllaTool = {
-  shortName: "Ground Search",
+  shortName: "Web Search",
   previewFn: (args: any) => {
     displayBoxedText(`Searching the web for ${args.query}`);
+  },
+  skipConfirmation: true,
+  declaration: {
+    name: "web_search",
+    description:
+      "search the web for the latest information, with gemini groundSearch",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: "The search query",
+        },
+      },
+      required: ["query"],
+    },
   },
   toolFn: async (args: any) => {
     const query = args.query as string;
@@ -54,20 +70,5 @@ export let googleSearchTool: MacrophyllaTool = {
         success: false,
       };
     }
-  },
-  declaration: {
-    name: "groundSearch",
-    description:
-      "search the web for the latest information, with gemini groundSearch",
-    parameters: {
-      type: Type.OBJECT,
-      properties: {
-        query: {
-          type: Type.STRING,
-          description: "The search query",
-        },
-      },
-      required: ["query"],
-    },
   },
 };

@@ -6,17 +6,12 @@ import { MacrophyllaTool } from "./type.mjs";
 import { displayBoxedText } from "../util.mjs";
 
 export let nodejsScriptTool: MacrophyllaTool = {
-  toolFn: async (args: any) => {
-    const code = args.code;
-    const tempDir = path.join(process.cwd(), "./");
-    return await executeNodeJsCode(code, tempDir);
-  },
   shortName: "Node.js",
   previewFn: (args: any) => {
     displayBoxedText(args.code);
   },
   declaration: {
-    name: "executeNodeCode",
+    name: "nodejs_script",
     description:
       "provide node.js script in ES Module syntax. Execute in system and return the output. it can access the file system. also called 'node.js 脚本'",
     parameters: {
@@ -30,5 +25,10 @@ export let nodejsScriptTool: MacrophyllaTool = {
       },
       required: ["code"],
     },
+  },
+  toolFn: async (args: any) => {
+    const code = args.code;
+    const tempDir = path.join(process.cwd(), "./");
+    return await executeNodeJsCode(code, tempDir);
   },
 };

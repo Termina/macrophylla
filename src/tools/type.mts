@@ -5,4 +5,5 @@ export type MacrophyllaTool = {
   toolFn: (args: any) => Promise<any>;
   previewFn: (args: any) => void;
   declaration: FunctionDeclaration;
+  skipConfirmation?: boolean;
 };

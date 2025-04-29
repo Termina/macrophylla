@@ -6,8 +6,9 @@ import { Type } from "@google/genai";
 import { displayBoxedText } from "../util.mjs";
 import { MacrophyllaTool } from "./type.mjs";
 
-export let filesReadTool: MacrophyllaTool = {
+export let filesWriteTool: MacrophyllaTool = {
   shortName: "batch create/save files",
+  skipConfirmation: true,
   previewFn: (args: any) => {
     let entries = args.entries as Array<{
       code: string;

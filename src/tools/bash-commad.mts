@@ -14,7 +14,7 @@ export let bashCommandTool: MacrophyllaTool = {
     displayBoxedText(args.command);
   },
   declaration: {
-    name: "executeBashCommand",
+    name: "bash_command",
     description:
       "provide bash command, run in system, and return the output. it can access file system. also called 'bash 脚本'",
     parameters: {
