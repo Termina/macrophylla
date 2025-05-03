@@ -19,6 +19,7 @@ import { filesReadTool } from "./tools/files-write.mjs";
 import { googleSearchTool } from "./tools/google-search.mjs";
 import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
+import { changeDirTool } from "./tools/change-dir.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -34,7 +35,7 @@ const toolContextPrompt = () => {
   let bashInfo = execSync("bash --version | head -n 1");
 
   return (
-    "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都考虑一下, 这些工具来帮助用户, 如果可以就调用:\n" +
+    "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都尝试用工具来帮助用户, 如果可以就调用:\n" +
     "- 使用 current_dir tool 获取当前目录信息\n" +
     "- 使用 bash_command tool 执行 bash 命令\n" +
     "- 使用 nodejs_script tool 执行 Node.js 代码\n" +
@@ -44,7 +45,8 @@ const toolContextPrompt = () => {
     "\n" +
     `你并不是完全隔离在沙箱当中的, 调用 nodejs 可以完成大量任务. 当前系统信息: ${osInfo}\n` +
     `Node.js 信息: ${nodeInfo}\n` +
-    `Bash 信息: ${bashInfo}\n`
+    `Bash 信息: ${bashInfo}\n` +
+    "如果输入的信息直接就是 Unix 命令, 那么直接用 bash_command tool 执行即可.\n"
   );
 };
 
@@ -87,6 +89,7 @@ let toolsDict: Record<string, MacrophyllaTool> = {
   [filesWriteTool.declaration.name!]: filesWriteTool,
   [googleSearchTool.declaration.name!]: googleSearchTool,
   [currentDirTool.declaration.name!]: currentDirTool,
+  [changeDirTool.declaration.name!]: changeDirTool,
 };
 
 const main = async () => {
@@ -110,6 +113,7 @@ const main = async () => {
           filesWriteTool.declaration,
           googleSearchTool.declaration,
           currentDirTool.declaration,
+          changeDirTool.declaration,
         ],
       },
     ];
@@ -118,6 +122,7 @@ const main = async () => {
     const chat = genAi.chats.create({
       model: "gemini-2.0-flash-lite",
       config: {
+        systemInstruction: toolContextPrompt(),
         httpOptions: {
           baseUrl: geminiBaseUrl,
         },
@@ -126,14 +131,10 @@ const main = async () => {
         temperature: 0.2,
       },
       history: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: toolContextPrompt(),
-            },
-          ],
-        },
+        // {
+        //   role: "user",
+        //   parts: [{ text: toolContextPrompt() }],
+        // },
       ],
     });
 
