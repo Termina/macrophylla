@@ -1,9 +1,8 @@
 {
   "name": "macrophylla",
   "dependencies": {
-    "@calcit/procs": "^0.9.9",
-    "@google/genai": "^0.8.0",
-    "@google/generative-ai": "^0.24.0",
+    "@calcit/procs": "^0.9.11",
+    "@google/genai": "^0.10.0",
     "chalk": "^5.4.1",
     "string-width": "^7.2.0"
   },
@@ -17,14 +16,15 @@
     "mcpl": "./bin.mjs"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
+    "@types/node": "^22.15.3",
     "bottom-tip": "^0.1.5",
     "typescript": "^5.8.3",
     "url-parse": "^1.5.10",
-    "vite": "^6.2.5"
+    "vite": "^6.3.3"
   },
   "version": "0.0.1",
   "cirruInfo": {
     "calcitVersion": "0.9.9"
-  }
+  },
+  "packageManager": "yarn@1.22.19+sha1.4ba7fc5c6e704fce2066ecbfb0b0d8976fe62447"
 }
