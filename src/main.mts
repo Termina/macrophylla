@@ -20,6 +20,7 @@ import { googleSearchTool } from "./tools/google-search.mjs";
 import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
+import { guideSteps } from "./tools/guide-steps.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -35,6 +36,7 @@ const toolContextPrompt = () => {
   let bashInfo = execSync("bash --version | head -n 1");
 
   return (
+    guideSteps +
     "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都尝试用工具来帮助用户, 如果可以就调用:\n" +
     "- 使用 current_dir tool 获取当前目录信息\n" +
     "- 使用 bash_command tool 执行 bash 命令\n" +
@@ -120,7 +122,7 @@ const main = async () => {
 
     // Create a chat session with the defined tool
     const chat = genAi.chats.create({
-      model: "gemini-2.0-flash-lite",
+      model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.0-flash",
       config: {
         systemInstruction: toolContextPrompt(),
         httpOptions: {
