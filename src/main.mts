@@ -14,13 +14,13 @@ import {
 import { handleChildSIGINT } from "./tools/task-state.mjs";
 import { bashCommandTool } from "./tools/bash-commad.mjs";
 import { nodejsScriptTool } from "./tools/nodejs-script.mjs";
-import { filesWriteTool } from "./tools/files-read.mjs";
-import { filesReadTool } from "./tools/files-write.mjs";
+import { filesWriteTool } from "./tools/files-write.mjs";
+import { filesReadTool } from "./tools/files-read.mjs";
 import { googleSearchTool } from "./tools/google-search.mjs";
 import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
-import { guideSteps } from "./tools/guide-steps.mjs";
+import { toolContextPrompt } from "./tools/guide-steps.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -30,34 +30,9 @@ const geminiBaseUrl = process.env.GEMINI_BASE_URL;
 const verbose =
   (process.env.verbose || process.env.VERBOSE) === "true" || false;
 const thinkingBudget = parseInt(
-  process.env.thinking_budget || process.env.THINKING_BUDGET || "1024",
+  process.env.thinking_budget || process.env.THINKING_BUDGET || "600",
   10
 );
-
-// 添加一个函数来生成上下文提醒
-const toolContextPrompt = () => {
-  let osInfo = `${process.platform}, 架构: ${process.arch}, CPU 核心数: ${
-    os.cpus().length
-  }.`;
-  let nodeInfo = `${process.version}, 当前目录: ${process.cwd()}.`;
-  let bashInfo = execSync("bash --version | head -n 1");
-
-  return (
-    guideSteps +
-    "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都尝试用工具来帮助用户, 如果可以就调用:\n" +
-    "- 使用 current_dir tool 获取当前目录信息\n" +
-    "- 使用 bash_command tool 执行 bash 命令\n" +
-    "- 使用 nodejs_script tool 执行 Node.js 代码\n" +
-    "- 使用 write_files tool 同时创建多个文件\n" +
-    "- 使用 read_files tool 读取文件内容\n" +
-    "- 使用 web_search tool 搜索最新信息\n" +
-    "\n" +
-    `你并不是完全隔离在沙箱当中的, 调用 nodejs 可以完成大量任务. 当前系统信息: ${osInfo}\n` +
-    `Node.js 信息: ${nodeInfo}\n` +
-    `Bash 信息: ${bashInfo}\n` +
-    "如果输入的信息直接就是 Unix 命令, 那么直接用 bash_command tool 执行即可.\n"
-  );
-};
 
 const rl = readline.createInterface({
   input: process.stdin,
