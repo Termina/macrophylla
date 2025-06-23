@@ -14,43 +14,25 @@ import {
 import { handleChildSIGINT } from "./tools/task-state.mjs";
 import { bashCommandTool } from "./tools/bash-commad.mjs";
 import { nodejsScriptTool } from "./tools/nodejs-script.mjs";
-import { filesWriteTool } from "./tools/files-read.mjs";
-import { filesReadTool } from "./tools/files-write.mjs";
+import { filesWriteTool } from "./tools/files-write.mjs";
+import { filesReadTool } from "./tools/files-read.mjs";
 import { googleSearchTool } from "./tools/google-search.mjs";
 import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
-import { guideSteps } from "./tools/guide-steps.mjs";
+import { toolContextPrompt } from "./tools/guide-steps.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 const geminiBaseUrl = process.env.GEMINI_BASE_URL;
 
-// 添加一个函数来生成上下文提醒
-const toolContextPrompt = () => {
-  let osInfo = `${process.platform}, 架构: ${process.arch}, CPU 核心数: ${
-    os.cpus().length
-  }.`;
-  let nodeInfo = `${process.version}, 当前目录: ${process.cwd()}.`;
-  let bashInfo = execSync("bash --version | head -n 1");
-
-  return (
-    guideSteps +
-    "使用中文回复，但代码保持英文. 输出环境为命令行, Markdown 效果不大减少使用. 你的职责是命令行助手, 请在每次回答时都尝试用工具来帮助用户, 如果可以就调用:\n" +
-    "- 使用 current_dir tool 获取当前目录信息\n" +
-    "- 使用 bash_command tool 执行 bash 命令\n" +
-    "- 使用 nodejs_script tool 执行 Node.js 代码\n" +
-    "- 使用 write_files tool 同时创建多个文件\n" +
-    "- 使用 read_files tool 读取文件内容\n" +
-    "- 使用 web_search tool 搜索最新信息\n" +
-    "\n" +
-    `你并不是完全隔离在沙箱当中的, 调用 nodejs 可以完成大量任务. 当前系统信息: ${osInfo}\n` +
-    `Node.js 信息: ${nodeInfo}\n` +
-    `Bash 信息: ${bashInfo}\n` +
-    "如果输入的信息直接就是 Unix 命令, 那么直接用 bash_command tool 执行即可.\n"
-  );
-};
+const verbose =
+  (process.env.verbose || process.env.VERBOSE) === "true" || false;
+const thinkingBudget = parseInt(
+  process.env.thinking_budget || process.env.THINKING_BUDGET || "600",
+  10
+);
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -122,7 +104,7 @@ const main = async () => {
 
     // Create a chat session with the defined tool
     const chat = genAi.chats.create({
-      model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.0-flash",
+      model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
       config: {
         systemInstruction: toolContextPrompt(),
         httpOptions: {
@@ -131,6 +113,10 @@ const main = async () => {
         tools,
         toolConfig,
         temperature: 0.2,
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingBudget: thinkingBudget,
+        },
       },
       history: [
         // {
@@ -144,7 +130,7 @@ const main = async () => {
     let messageCount = 0;
 
     outerWhile: while (true) {
-      if (nextQuestion) {
+      if (verbose && nextQuestion) {
         console.log(chalk.gray("\n" + nextQuestion + "\n"));
       }
       let question =
@@ -160,7 +146,9 @@ const main = async () => {
       messageCount++;
       if (messageCount % 10 === 0) {
         const reminder = "重要提醒: " + toolContextPrompt();
-        console.log(chalk.gray("\n\n(提醒)\n\n"));
+        if (verbose) {
+          console.log(chalk.gray("\n\n(提醒)\n\n"));
+        }
         question = `${reminder}\n\n${question}`;
       }
 
@@ -205,6 +193,8 @@ const main = async () => {
                   } else {
                     console.log(chalk.green("运行完成."));
                   }
+                  result.originalQuestion = question;
+                  result.toolName = tool.shortName;
 
                   nextQuestion =
                     "answer based previous command response:\n" +
@@ -237,8 +227,15 @@ const main = async () => {
             }
           }
         }
-
-        if (responseMessage == null && responseFunctionCalls == null) {
+        if (chunk.candidates?.[0].content?.parts?.[0]?.text) {
+          if (verbose) {
+            console.log(
+              chalk.gray(
+                `\nThinking: ${chunk.candidates[0].content.parts[0].text}\n`
+              )
+            );
+          }
+        } else if (responseMessage == null && responseFunctionCalls == null) {
           console.warn("unknown chunk:", chunk);
         }
       }
