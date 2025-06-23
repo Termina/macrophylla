@@ -104,8 +104,7 @@ const main = async () => {
 
     // Create a chat session with the defined tool
     const chat = genAi.chats.create({
-      model:
-        process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash-preview-05-20",
+      model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
       config: {
         systemInstruction: toolContextPrompt(),
         httpOptions: {
