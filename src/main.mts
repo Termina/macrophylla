@@ -122,7 +122,8 @@ const main = async () => {
 
     // Create a chat session with the defined tool
     const chat = genAi.chats.create({
-      model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.0-flash",
+      model:
+        process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash-preview-05-20",
       config: {
         systemInstruction: toolContextPrompt(),
         httpOptions: {
@@ -131,6 +132,10 @@ const main = async () => {
         tools,
         toolConfig,
         temperature: 0.2,
+        thinkingConfig: {
+          includeThoughts: true,
+          thinkingBudget: 600,
+        },
       },
       history: [
         // {
@@ -237,8 +242,13 @@ const main = async () => {
             }
           }
         }
-
-        if (responseMessage == null && responseFunctionCalls == null) {
+        if (chunk.candidates?.[0].content?.parts?.[0]?.text) {
+          console.log(
+            chalk.gray(
+              `\nThinking: ${chunk.candidates[0].content.parts[0].text}\n`
+            )
+          );
+        } else if (responseMessage == null && responseFunctionCalls == null) {
           console.warn("unknown chunk:", chunk);
         }
       }
