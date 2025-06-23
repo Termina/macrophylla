@@ -27,6 +27,13 @@ const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 const geminiBaseUrl = process.env.GEMINI_BASE_URL;
 
+const verbose =
+  (process.env.verbose || process.env.VERBOSE) === "true" || false;
+const thinkingBudget = parseInt(
+  process.env.thinking_budget || process.env.THINKING_BUDGET || "1024",
+  10
+);
+
 // 添加一个函数来生成上下文提醒
 const toolContextPrompt = () => {
   let osInfo = `${process.platform}, 架构: ${process.arch}, CPU 核心数: ${
@@ -134,7 +141,7 @@ const main = async () => {
         temperature: 0.2,
         thinkingConfig: {
           includeThoughts: true,
-          thinkingBudget: 600,
+          thinkingBudget: thinkingBudget,
         },
       },
       history: [
@@ -149,7 +156,7 @@ const main = async () => {
     let messageCount = 0;
 
     outerWhile: while (true) {
-      if (nextQuestion) {
+      if (verbose && nextQuestion) {
         console.log(chalk.gray("\n" + nextQuestion + "\n"));
       }
       let question =
@@ -165,7 +172,9 @@ const main = async () => {
       messageCount++;
       if (messageCount % 10 === 0) {
         const reminder = "重要提醒: " + toolContextPrompt();
-        console.log(chalk.gray("\n\n(提醒)\n\n"));
+        if (verbose) {
+          console.log(chalk.gray("\n\n(提醒)\n\n"));
+        }
         question = `${reminder}\n\n${question}`;
       }
 
@@ -210,6 +219,8 @@ const main = async () => {
                   } else {
                     console.log(chalk.green("运行完成."));
                   }
+                  result.originalQuestion = question;
+                  result.toolName = tool.shortName;
 
                   nextQuestion =
                     "answer based previous command response:\n" +
@@ -243,11 +254,13 @@ const main = async () => {
           }
         }
         if (chunk.candidates?.[0].content?.parts?.[0]?.text) {
-          console.log(
-            chalk.gray(
-              `\nThinking: ${chunk.candidates[0].content.parts[0].text}\n`
-            )
-          );
+          if (verbose) {
+            console.log(
+              chalk.gray(
+                `\nThinking: ${chunk.candidates[0].content.parts[0].text}\n`
+              )
+            );
+          }
         } else if (responseMessage == null && responseFunctionCalls == null) {
           console.warn("unknown chunk:", chunk);
         }
