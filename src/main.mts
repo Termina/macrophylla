@@ -4,6 +4,7 @@ import {
   FunctionCallingConfigMode,
   FunctionDeclaration,
   GoogleGenAI,
+  HarmBlockThreshold,
   Tool,
   ToolConfig,
   Type,
@@ -104,6 +105,9 @@ const main = async () => {
     // Create a chat session with the defined tool
     const chat = genAi.chats.create({
       model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
+      config: {
+        systemInstruction: toolContextPrompt(),
+      },
       // history: [{ role: "user", parts: [{ text: toolContextPrompt() }] }],
     });
 
@@ -125,13 +129,13 @@ const main = async () => {
       }
       // 每隔 5 轮对话，插入上下文提醒
       messageCount++;
-      if (messageCount % 10 === 0) {
-        const reminder = "重要提醒: " + toolContextPrompt();
-        if (verbose) {
-          console.log(chalk.gray("\n\n(提醒)\n\n"));
-        }
-        question = `${reminder}\n\n${question}`;
-      }
+      // if (messageCount % 10 === 0) {
+      //   const reminder = "重要提醒: " + toolContextPrompt();
+      //   if (verbose) {
+      //     console.log(chalk.gray("\n\n(提醒)\n\n"));
+      //   }
+      //   question = `${reminder}\n\n${question}`;
+      // }
 
       console.log(chalk.gray("\nResponding...\n"));
 
@@ -140,14 +144,14 @@ const main = async () => {
         message: question,
         config: {
           httpOptions: { baseUrl: geminiBaseUrl },
-          systemInstruction: toolContextPrompt(),
           tools,
           toolConfig,
           temperature: 0.2,
-          // thinkingConfig: {
-          //   includeThoughts: true,
-          //   thinkingBudget: thinkingBudget,
-          // },
+          // safetySettings: [{ threshold: HarmBlockThreshold.OFF }],
+          thinkingConfig:
+            thinkingBudget > 256
+              ? { includeThoughts: true, thinkingBudget: thinkingBudget }
+              : undefined,
         },
       });
       for await (const chunk of response) {
@@ -209,7 +213,7 @@ const main = async () => {
                   continue outerWhile;
                 }
               } else {
-                nextQuestion = `用户拒绝了这条命令: (${confirmation}), 尝试改进一下方案.`;
+                nextQuestion = `存在问题, 要求改进调用方式: ${confirmation}.`;
                 continue outerWhile;
               }
             } else {

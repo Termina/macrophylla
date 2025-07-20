@@ -23,19 +23,25 @@ export const displayBoxedText = (text: string) => {
 };
 
 /** Format an object into a thin string representation */
-export const formatThinObject = (obj: any): string => {
+export const formatThinObject = (obj: any, base: string = ""): string => {
   if (obj === null || obj === undefined) {
     return undefined as any;
   }
   if (typeof obj !== "object") {
     return `${obj}`;
   }
-
+  if (Array.isArray(obj)) {
+    return obj
+      .map((item, idx) => formatThinObject(item, base + `[${idx}]`))
+      .join("\n---- Next Item ----\n");
+  }
   return Object.entries(obj)
     .filter(([key, value]) => value != null)
     .map(
       ([key, value]) =>
-        `---- ${key} ----\n${formatThinObject(value) || "(empty)"}\n`
+        `---- ${base + "." + key} ----\n${
+          formatThinObject(value, base + "." + key) || "(empty)"
+        }\n`
     )
     .join("\n");
 };

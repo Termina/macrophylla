@@ -6,45 +6,53 @@ import { displayBoxedText } from "../util.mjs";
 import { MacrophyllaTool } from "./type.mjs";
 
 export let filesReadTool: MacrophyllaTool = {
-  shortName: "read multiple files",
+  shortName: "read multiple paths",
   previewFn: (args: any) => {
-    displayBoxedText(`Reading file ${args.entries.join(", ")}`);
+    displayBoxedText(`Reading file ${args.paths.join(", ")}`);
   },
   declaration: {
-    name: "read_files",
+    name: "read_paths",
     description:
-      "read multiple files in utf8. it can access the file system. also called '读取文本文件'",
+      "read multiple paths into utf8, path relative to the current working directory or absolute path.",
     parameters: {
       type: Type.OBJECT,
       properties: {
-        entries: {
+        paths: {
           type: Type.ARRAY,
-          description: "an array of entries to read",
+          description: "an array of paths to read",
           items: {
             type: Type.STRING,
             description:
-              "the path to read, relative to the current working directory",
+              "the path to read, relative to the current working directory, or absolute path",
           },
         },
       },
     },
   },
   toolFn: async (args: any) => {
-    let entries = args.entries as Array<string>;
+    let paths = args.paths as Array<string>;
     let results = await Promise.allSettled(
-      entries.map(async (entry) => {
+      paths.map(async (entry) => {
         const filepath = entry as string;
         const filePath = filepath.startsWith("/")
           ? filepath
           : path.join("./", filepath);
         console.log(`Reading file ${filePath}`);
         const data = await fs.readFile(filePath, "utf8");
-        return data;
+        return { path: entry, content: data };
       })
     );
 
     return {
-      stdout: JSON.stringify(results),
+      stdout: JSON.stringify(
+        results.map((result) => {
+          if (result.status === "fulfilled") {
+            return result.value;
+          } else {
+            return `Error reading file: ${result.reason}`;
+          }
+        })
+      ),
       stderr: "",
       success: results.every((result) => result.status === "fulfilled"),
     };
