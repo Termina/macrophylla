@@ -1,6 +1,4 @@
-import os from "os";
 import * as readline from "readline";
-import { execSync } from "child_process";
 import chalk from "chalk";
 import {
   FunctionCallingConfigMode,
@@ -21,6 +19,7 @@ import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
 import { toolContextPrompt } from "./tools/guide-steps.mjs";
+import { formatThinObject } from "./util.mjs";
 
 // Initialize the Generative AI client
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -30,7 +29,7 @@ const geminiBaseUrl = process.env.GEMINI_BASE_URL;
 const verbose =
   (process.env.verbose || process.env.VERBOSE) === "true" || false;
 const thinkingBudget = parseInt(
-  process.env.thinking_budget || process.env.THINKING_BUDGET || "600",
+  process.env.thinking_budget || process.env.THINKING_BUDGET || "400",
   10
 );
 
@@ -93,7 +92,7 @@ const main = async () => {
         functionDeclarations: [
           bashCommandTool.declaration,
           nodejsScriptTool.declaration,
-          filesWriteTool.declaration,
+          filesReadTool.declaration,
           filesWriteTool.declaration,
           googleSearchTool.declaration,
           currentDirTool.declaration,
@@ -105,25 +104,7 @@ const main = async () => {
     // Create a chat session with the defined tool
     const chat = genAi.chats.create({
       model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
-      config: {
-        systemInstruction: toolContextPrompt(),
-        httpOptions: {
-          baseUrl: geminiBaseUrl,
-        },
-        tools,
-        toolConfig,
-        temperature: 0.2,
-        thinkingConfig: {
-          includeThoughts: true,
-          thinkingBudget: thinkingBudget,
-        },
-      },
-      history: [
-        // {
-        //   role: "user",
-        //   parts: [{ text: toolContextPrompt() }],
-        // },
-      ],
+      // history: [{ role: "user", parts: [{ text: toolContextPrompt() }] }],
     });
 
     let nextQuestion: string = "";
@@ -155,9 +136,23 @@ const main = async () => {
       console.log(chalk.gray("\nResponding...\n"));
 
       // Use the chat API to send messages and get streaming responses
-      const response = await chat.sendMessageStream({ message: question });
+      const response = await chat.sendMessageStream({
+        message: question,
+        config: {
+          httpOptions: { baseUrl: geminiBaseUrl },
+          systemInstruction: toolContextPrompt(),
+          tools,
+          toolConfig,
+          temperature: 0.2,
+          // thinkingConfig: {
+          //   includeThoughts: true,
+          //   thinkingBudget: thinkingBudget,
+          // },
+        },
+      });
       for await (const chunk of response) {
         let responseMessage = chunk.text;
+        let textWritten = false;
         let responseFunctionCalls =
           chunk.functionCalls != null && chunk.functionCalls.length > 0
             ? chunk.functionCalls
@@ -165,6 +160,7 @@ const main = async () => {
 
         if (responseMessage != null) {
           process.stdout.write(responseMessage);
+          textWritten = true;
         }
         if (responseFunctionCalls) {
           for (const functionCall of responseFunctionCalls) {
@@ -193,12 +189,12 @@ const main = async () => {
                   } else {
                     console.log(chalk.green("运行完成."));
                   }
-                  result.originalQuestion = question;
-                  result.toolName = tool.shortName;
+                  // result.originalQuestion = question;
+                  // result.toolName = tool.shortName;
 
                   nextQuestion =
                     "answer based previous command response:\n" +
-                    JSON.stringify(result);
+                    formatThinObject(result);
                   continue outerWhile;
                 } catch (error) {
                   const result = {
@@ -228,7 +224,7 @@ const main = async () => {
           }
         }
         if (chunk.candidates?.[0].content?.parts?.[0]?.text) {
-          if (verbose) {
+          if (!textWritten && verbose) {
             console.log(
               chalk.gray(
                 `\nThinking: ${chunk.candidates[0].content.parts[0].text}\n`
@@ -236,7 +232,7 @@ const main = async () => {
             );
           }
         } else if (responseMessage == null && responseFunctionCalls == null) {
-          console.warn("unknown chunk:", chunk);
+          console.warn("unknown chunk:", JSON.stringify(chunk));
         }
       }
 
