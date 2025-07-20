@@ -44,15 +44,13 @@ export let filesReadTool: MacrophyllaTool = {
     );
 
     return {
-      stdout: JSON.stringify(
-        results.map((result) => {
-          if (result.status === "fulfilled") {
-            return result.value;
-          } else {
-            return `Error reading file: ${result.reason}`;
-          }
-        })
-      ),
+      stdout: results.map((result) => {
+        if (result.status === "fulfilled") {
+          return result.value;
+        } else {
+          return `Error reading file: ${result.reason}`;
+        }
+      }),
       stderr: "",
       success: results.every((result) => result.status === "fulfilled"),
     };

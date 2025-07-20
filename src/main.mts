@@ -19,7 +19,8 @@ import { googleSearchTool } from "./tools/google-search.mjs";
 import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
-import { toolContextPrompt } from "./tools/guide-steps.mjs";
+import { guideSteps, toolContextPrompt } from "./tools/guide-steps.mjs";
+import { goalTool, getGoal } from "./tools/goal.mjs";
 import { formatThinObject } from "./util.mjs";
 
 // Initialize the Generative AI client
@@ -67,6 +68,8 @@ const sayingOk = (message: string) => {
 };
 
 let toolsDict: Record<string, MacrophyllaTool> = {
+  [getGoal.declaration.name!]: getGoal,
+  [goalTool.declaration.name!]: goalTool,
   [bashCommandTool.declaration.name!]: bashCommandTool,
   [nodejsScriptTool.declaration.name!]: nodejsScriptTool,
   [filesReadTool.declaration.name!]: filesReadTool,
@@ -91,6 +94,8 @@ const main = async () => {
     let tools: Tool[] = [
       {
         functionDeclarations: [
+          getGoal.declaration,
+          goalTool.declaration,
           bashCommandTool.declaration,
           nodejsScriptTool.declaration,
           filesReadTool.declaration,
@@ -141,7 +146,9 @@ const main = async () => {
 
       // Use the chat API to send messages and get streaming responses
       const response = await chat.sendMessageStream({
-        message: question,
+        message:
+          question +
+          "(注意识别意图, 有新意图的话写入 remember_goal 工具, 记录任务目标和步骤. 不大清楚的时候查询通过 get_goal 工具来了解当前任务目标和步骤. 使用中文回复.)",
         config: {
           httpOptions: { baseUrl: geminiBaseUrl },
           tools,

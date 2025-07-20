@@ -27,7 +27,7 @@ export const formatThinObject = (obj: any, base: string = ""): string => {
   if (obj === null || obj === undefined) {
     return undefined as any;
   }
-  if (typeof obj !== "object") {
+  if (["string", "number", "boolean"].includes(typeof obj)) {
     return `${obj}`;
   }
   if (Array.isArray(obj)) {
@@ -35,6 +35,7 @@ export const formatThinObject = (obj: any, base: string = ""): string => {
       .map((item, idx) => formatThinObject(item, base + `[${idx}]`))
       .join("\n---- Next Item ----\n");
   }
+
   return Object.entries(obj)
     .filter(([key, value]) => value != null)
     .map(
