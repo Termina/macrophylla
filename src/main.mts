@@ -1,13 +1,13 @@
 import * as readline from "readline";
 import chalk from "chalk";
 import {
+  Content,
+  FunctionCall,
   FunctionCallingConfigMode,
-  FunctionDeclaration,
   GoogleGenAI,
-  HarmBlockThreshold,
+  Part,
   Tool,
   ToolConfig,
-  Type,
 } from "@google/genai";
 
 import { handleChildSIGINT } from "./tools/task-state.mjs";
@@ -19,20 +19,24 @@ import { googleSearchTool } from "./tools/google-search.mjs";
 import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
-import { guideSteps, toolContextPrompt } from "./tools/guide-steps.mjs";
+import { toolContextPrompt } from "./tools/guide-steps.mjs";
 import {
   rememberGoal,
   getGoal,
   finishGoal,
   updateWorkStepStatus,
+  recordFailedAttempt,
 } from "./tools/goal.mjs";
-import { formatThinObject } from "./util.mjs";
 
-// Initialize the Generative AI client
+// --- Agent State Definition ---
+interface AgentState {
+  history: Content[];
+  currentMessageParts: Part[];
+}
+
+// --- Tool & Model Configuration ---
 const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-
 const geminiBaseUrl = process.env.GEMINI_BASE_URL;
-
 const verbose =
   (process.env.verbose || process.env.VERBOSE) === "true" || false;
 const thinkingBudget = parseInt(
@@ -40,43 +44,12 @@ const thinkingBudget = parseInt(
   10
 );
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-});
-
-rl.on("SIGINT", () => {
-  let hitChild = handleChildSIGINT();
-  if (hitChild) {
-    console.log(chalk.gray("\nReceived SIGINT signal, killed child process"));
-  } else {
-    rl.close();
-    process.exit(0);
-  }
-});
-
-const ask = (question: string, seperator: boolean = false) => {
-  if (seperator) {
-    console.log(chalk.gray("\n" + "─".repeat(50)));
-  }
-  return new Promise<string>((resolve) => {
-    rl.question(chalk.cyan(question), (answer) => {
-      resolve(answer);
-    });
-  });
-};
-
-const sayingOk = (message: string) => {
-  return (
-    message === "ok" || message === "yes" || message === "y" || message === ""
-  );
-};
-
-let toolsDict: Record<string, MacrophyllaTool> = {
+const toolsDict: Record<string, MacrophyllaTool> = {
   [getGoal.declaration.name!]: getGoal,
   [finishGoal.declaration.name!]: finishGoal,
   [rememberGoal.declaration.name!]: rememberGoal,
   [updateWorkStepStatus.declaration.name!]: updateWorkStepStatus,
+  [recordFailedAttempt.declaration.name!]: recordFailedAttempt,
   [bashCommandTool.declaration.name!]: bashCommandTool,
   [nodejsScriptTool.declaration.name!]: nodejsScriptTool,
   [filesReadTool.declaration.name!]: filesReadTool,
@@ -86,185 +59,199 @@ let toolsDict: Record<string, MacrophyllaTool> = {
   [changeDirTool.declaration.name!]: changeDirTool,
 };
 
+const toolConfig: ToolConfig = {
+  functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO },
+};
+const tools: Tool[] = [
+  { functionDeclarations: Object.values(toolsDict).map((t) => t.declaration) },
+];
+
+// --- Agent Nodes (Core Logic) ---
+
+async function callModel(
+  state: AgentState
+): Promise<{ modelResponseParts: Part[]; toolCalls?: FunctionCall[] }> {
+  console.log(chalk.gray("\nThinking...\n"));
+
+  const chat = genAi.chats.create({
+    model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
+    config: { systemInstruction: toolContextPrompt() },
+    history: state.history,
+  });
+
+  const response = await chat.sendMessageStream({
+    message: state.currentMessageParts,
+    config: {
+      httpOptions: { baseUrl: geminiBaseUrl },
+      tools,
+      toolConfig,
+      temperature: 0.2,
+      thinkingConfig:
+        thinkingBudget > 256
+          ? { includeThoughts: true, thinkingBudget: thinkingBudget }
+          : undefined,
+    },
+  });
+
+  const newToolCalls: FunctionCall[] = [];
+  const modelResponseParts: Part[] = [];
+  let textResponse = "";
+
+  for await (const chunk of response) {
+    if (chunk.functionCalls) {
+      newToolCalls.push(...chunk.functionCalls);
+    }
+    const text = chunk.text;
+    if (text) {
+      textResponse += text;
+      process.stdout.write(text);
+    }
+  }
+
+  if (textResponse) {
+    modelResponseParts.push({ text: textResponse });
+  }
+  if (newToolCalls.length > 0) {
+    newToolCalls.forEach(call => {
+      modelResponseParts.push({ functionCall: call });
+    });
+  }
+
+  return {
+    modelResponseParts,
+    toolCalls: newToolCalls.length > 0 ? newToolCalls : undefined,
+  };
+}
+
+async function executeTools(
+  toolCalls: FunctionCall[]
+): Promise<{ toolResultParts: Part[] }> {
+  const toolResultParts: Part[] = [];
+
+  for (const call of toolCalls) {
+    const tool = call.name ? toolsDict[call.name] : undefined;
+    if (!tool) {
+      console.log(chalk.red(`\nError: Unsupported tool ${call.name}`));
+      toolResultParts.push({
+        functionResponse: {
+          name: call.name,
+          response: { error: `Unsupported tool: ${call.name}` },
+        },
+      });
+      continue;
+    }
+
+    console.log(chalk.yellow(`\nExecuting ${tool.shortName}...`));
+    tool.previewFn(call.args);
+
+    let confirmation = "y";
+    if (!tool.skipConfirmation) {
+      confirmation = await ask(
+        `\nExecute this ${tool.shortName} script? (y/n): `
+      );
+    }
+
+    if (sayingOk(confirmation)) {
+      try {
+        const result = await tool.toolFn(call.args);
+        toolResultParts.push({
+          functionResponse: { name: call.name, response: result },
+        });
+        console.log(chalk.green("Execution finished."));
+      } catch (error) {
+        const errorMsg = error.stderr || error.message;
+        console.log(chalk.red(`\nExecution failed: ${errorMsg}`));
+        await recordFailedAttempt.toolFn({
+          step: `(Attempting) ${tool.shortName}`,
+          toolName: tool.shortName,
+          toolArgs: call.args,
+          error: errorMsg,
+        });
+        toolResultParts.push({
+          functionResponse: {
+            name: call.name,
+            response: { error: errorMsg },
+          },
+        });
+      }
+    } else {
+      console.log(chalk.gray("Execution skipped by user."));
+      toolResultParts.push({
+        functionResponse: {
+          name: call.name,
+          response: { error: "User skipped execution." },
+        },
+      });
+    }
+  }
+
+  return { toolResultParts };
+}
+
+// --- User Interaction ---
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+rl.on("SIGINT", () => {
+  if (handleChildSIGINT()) {
+    console.log(chalk.gray("\nSIGINT: Killed child process."));
+  } else {
+    rl.close();
+    process.exit(0);
+  }
+});
+
+const ask = (question: string, seperator: boolean = false) => {
+  if (seperator) console.log(chalk.gray("\n" + "─".repeat(50)));
+  return new Promise<string>((resolve) => {
+    rl.question(chalk.cyan(question), resolve);
+  });
+};
+
+const sayingOk = (message: string) =>
+  ["ok", "yes", "y", ""].includes(message.toLowerCase());
+
+// --- Main Agent Runner ---
 const main = async () => {
   try {
-    // Create a chat session
-    // Define a function declaration tool
-
-    // Configure tool settings
-    const toolConfig: ToolConfig = {
-      functionCallingConfig: {
-        mode: FunctionCallingConfigMode.AUTO, // Let the model decide when to call the function
-      },
-    };
-
-    let tools: Tool[] = [
-      {
-        functionDeclarations: [
-          getGoal.declaration,
-          finishGoal.declaration,
-          rememberGoal.declaration,
-          updateWorkStepStatus.declaration,
-          bashCommandTool.declaration,
-          nodejsScriptTool.declaration,
-          filesReadTool.declaration,
-          filesWriteTool.declaration,
-          googleSearchTool.declaration,
-          currentDirTool.declaration,
-          changeDirTool.declaration,
-        ],
-      },
-    ];
-
-    // Create a chat session with the defined tool
-    const chat = genAi.chats.create({
-      model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
-      config: {
-        systemInstruction: toolContextPrompt(),
-      },
-      // history: [{ role: "user", parts: [{ text: toolContextPrompt() }] }],
-    });
-
-    let nextQuestion: string = "";
-    let messageCount = 0;
-
-    outerWhile: while (true) {
-      if (verbose && nextQuestion) {
-        console.log(chalk.gray("\n" + nextQuestion + "\n"));
-      }
-      let question =
-        nextQuestion ||
-        (await ask("\nWhat's the task: ", true)) ||
-        "继续上一个会话的计划";
-
-      if (question.toLowerCase() === "exit") {
+    let history: Content[] = [];
+    while (true) {
+      const userInput =
+        (await ask("\nWhat's the task: ", true)) || "继续上一个会话的计划";
+      if (userInput.toLowerCase() === "exit") {
         console.log("\nBye!");
         break;
       }
-      // 每隔 5 轮对话，插入上下文提醒
-      messageCount++;
-      // if (messageCount % 10 === 0) {
-      //   const reminder = "重要提醒: " + toolContextPrompt();
-      //   if (verbose) {
-      //     console.log(chalk.gray("\n\n(提醒)\n\n"));
-      //   }
-      //   question = `${reminder}\n\n${question}`;
-      // }
 
-      console.log(chalk.gray("\nResponding...\n"));
+      let state: AgentState = {
+        history: history,
+        currentMessageParts: [{ text: userInput }],
+      };
 
-      // Use the chat API to send messages and get streaming responses
-      const response = await chat.sendMessageStream({
-        message: question,
-        config: {
-          httpOptions: { baseUrl: geminiBaseUrl },
-          tools,
-          toolConfig,
-          temperature: 0.2,
-          // safetySettings: [{ threshold: HarmBlockThreshold.OFF }],
-          thinkingConfig:
-            thinkingBudget > 256
-              ? { includeThoughts: true, thinkingBudget: thinkingBudget }
-              : undefined,
-        },
-      });
-      for await (const chunk of response) {
-        let responseMessage = chunk.text;
-        let textWritten = false;
-        let responseFunctionCalls =
-          chunk.functionCalls != null && chunk.functionCalls.length > 0
-            ? chunk.functionCalls
-            : undefined;
+      // The "Graph" or State Machine Loop
+      while (true) {
+        const { modelResponseParts, toolCalls } = await callModel(state);
 
-        if (responseMessage != null) {
-          process.stdout.write(responseMessage);
-          textWritten = true;
+        state.history.push(
+          { role: "user", parts: state.currentMessageParts },
+          { role: "model", parts: modelResponseParts }
+        );
+
+        if (!toolCalls || toolCalls.length === 0) {
+          console.log(chalk.green("\nTask iteration complete."));
+          history = state.history;
+          break; 
         }
-        if (responseFunctionCalls) {
-          for (const functionCall of responseFunctionCalls) {
-            let tool = toolsDict[functionCall.name!];
-            const args: any = functionCall.args;
-            if (tool) {
-              // Ask for user confirmation
-              console.log(`\n${tool.shortName} to execute:\n`);
-              tool.previewFn(args);
-              let confirmation = "ok";
-              if (!tool.skipConfirmation) {
-                confirmation = await ask(
-                  `\nExecute this ${tool.shortName} script? (y/n): `
-                );
-              }
 
-              if (sayingOk(confirmation)) {
-                console.log(
-                  chalk.gray(`\nExecuting ${tool.shortName} command...`)
-                );
+        const { toolResultParts } = await executeTools(toolCalls);
 
-                try {
-                  const result = await tool.toolFn(args);
-                  if (result.stderr) {
-                    console.log(chalk.red("运行失败\n" + result.stderr));
-                  } else {
-                    console.log(chalk.green("运行完成."));
-                  }
-                  // result.originalQuestion = question;
-                  // result.toolName = tool.shortName;
-
-                  const goalState = await getGoal.toolFn({});
-
-                  nextQuestion =
-                    "current goal state:\n" +
-                    formatThinObject(goalState) +
-                    "\nanswer based previous command response:\n" +
-                    formatThinObject(result);
-                  continue outerWhile;
-                } catch (error) {
-                  const result = {
-                    stdout: error.stdout || "",
-                    stderr: error.stderr || error.message,
-                    success: false,
-                  };
-                  console.log("\n");
-                  console.log("Command failed:", result);
-
-                  nextQuestion = `命令执行过程当中失败: ${result.stderr}, 你能否改进一下方案?`;
-                  continue outerWhile;
-                }
-              } else {
-                nextQuestion = `存在问题, 要求改进调用方式: ${confirmation}.`;
-                continue outerWhile;
-              }
-            } else {
-              console.log(
-                chalk.red(
-                  `\n\nError: Unsupported function call ${functionCall.name}`
-                )
-              );
-              nextQuestion = `不支持的函数调用: ${functionCall.name}, 你能否改进一下方案?`;
-              continue outerWhile;
-            }
-          }
-        }
-        if (chunk.candidates?.[0].content?.parts?.[0]?.text) {
-          if (!textWritten && verbose) {
-            console.log(
-              chalk.gray(
-                `\nThinking: ${chunk.candidates[0].content.parts[0].text}\n`
-              )
-            );
-          }
-        } else if (responseMessage == null && responseFunctionCalls == null) {
-          console.warn("unknown chunk:", JSON.stringify(chunk));
-        }
+        state.currentMessageParts = toolResultParts;
       }
-
-      // clear the next question cache
-      nextQuestion = "";
     }
   } catch (err) {
-    console.error("Error:", err);
-    rl.close();
-    process.exit(1);
+    console.error("Fatal Error:", err);
   } finally {
     rl.close();
   }

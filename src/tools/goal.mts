@@ -1,7 +1,5 @@
 import { Type } from "@google/genai";
 import { MacrophyllaTool } from "./type.mjs";
-import { exec } from "child_process";
-import { promisify } from "util";
 
 let goal = {
   hasGoal: false,
@@ -9,6 +7,12 @@ let goal = {
   description: "(not defined yet)",
   workSteps: [] as { done: boolean; step: string }[],
   confirmSteps: [] as { done: boolean; step: string }[],
+  failedAttempts: [] as {
+    step: string;
+    toolName: string;
+    toolArgs: any;
+    error: string;
+  }[],
 };
 
 export let getGoal: MacrophyllaTool = {
@@ -19,7 +23,7 @@ export let getGoal: MacrophyllaTool = {
   },
   declaration: {
     name: "get_goal",
-    description: "get the current goal and work steps.",
+    description: "Get the current goal, work steps, and failed attempts.",
     parameters: {
       type: Type.OBJECT,
       properties: {},
@@ -32,6 +36,7 @@ export let getGoal: MacrophyllaTool = {
         description: goal.description,
         workSteps: goal.workSteps,
         confirmSteps: goal.confirmSteps,
+        failedAttempts: goal.failedAttempts,
       };
     }
 
@@ -49,7 +54,7 @@ export let finishGoal: MacrophyllaTool = {
   },
   declaration: {
     name: "finish_goal",
-    description: "Finish the current goal.",
+    description: "Finish the current goal and clear all states.",
     parameters: {
       type: Type.OBJECT,
       properties: {},
@@ -61,9 +66,56 @@ export let finishGoal: MacrophyllaTool = {
     goal.description = "(not defined yet)";
     goal.workSteps = [];
     goal.confirmSteps = [];
+    goal.failedAttempts = [];
 
     return {
-      message: "(finished goal, now goal is not defined)",
+      message: "(finished goal, all states have been cleared)",
+    };
+  },
+};
+
+export let recordFailedAttempt: MacrophyllaTool = {
+  shortName: "record failed attempt",
+  skipConfirmation: true,
+  previewFn: (args: any) => {
+    console.log(`Recording failed attempt for step: ${args.step}`);
+  },
+  declaration: {
+    name: "record_failed_attempt",
+    description: "Record a failed tool execution attempt for learning.",
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        step: {
+          type: Type.STRING,
+          description: "The work step that was being attempted.",
+        },
+        toolName: {
+          type: Type.STRING,
+          description: "The name of the tool that failed.",
+        },
+        toolArgs: {
+          type: Type.OBJECT,
+          description: "The arguments passed to the failed tool.",
+        },
+        error: {
+          type: Type.STRING,
+          description: "The error message (stderr) from the tool.",
+        },
+      },
+      required: ["step", "toolName", "toolArgs", "error"],
+    },
+  },
+  toolFn: async (args: any) => {
+    goal.failedAttempts.push({
+      step: args.step,
+      toolName: args.toolName,
+      toolArgs: args.toolArgs,
+      error: args.error,
+    });
+    return {
+      status: "failed attempt recorded",
+      failedAttempts: goal.failedAttempts,
     };
   },
 };
@@ -89,6 +141,7 @@ export let updateWorkStepStatus: MacrophyllaTool = {
           description: "The new status of the work step.",
         },
       },
+      required: ["step", "status"],
     },
   },
   toolFn: async (args: any) => {
@@ -112,7 +165,7 @@ export let rememberGoal: MacrophyllaTool = {
   declaration: {
     name: "remember_goal",
     description:
-      "read/write this state. remember the goal of this task, and the work steps to do.",
+      "Remember the goal and work steps. This should be the first step.",
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -151,6 +204,7 @@ export let rememberGoal: MacrophyllaTool = {
           },
         },
       },
+      required: ["goal", "description", "workSteps"],
     },
   },
   toolFn: async (args: any) => {
@@ -159,6 +213,7 @@ export let rememberGoal: MacrophyllaTool = {
     goal.description = args.description || goal.description;
     goal.workSteps = args.workSteps || goal.workSteps;
     goal.confirmSteps = args.confirmSteps || goal.confirmSteps;
+    goal.failedAttempts = []; // Clear previous failures when a new goal is set
 
     return {
       goal: goal.goal,
