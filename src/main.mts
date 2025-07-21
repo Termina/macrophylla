@@ -20,7 +20,12 @@ import { MacrophyllaTool } from "./tools/type.mjs";
 import { currentDirTool } from "./tools/current-dir.mjs";
 import { changeDirTool } from "./tools/change-dir.mjs";
 import { guideSteps, toolContextPrompt } from "./tools/guide-steps.mjs";
-import { goalTool, getGoal } from "./tools/goal.mjs";
+import {
+  rememberGoal,
+  getGoal,
+  finishGoal,
+  updateWorkStepStatus,
+} from "./tools/goal.mjs";
 import { formatThinObject } from "./util.mjs";
 
 // Initialize the Generative AI client
@@ -69,7 +74,9 @@ const sayingOk = (message: string) => {
 
 let toolsDict: Record<string, MacrophyllaTool> = {
   [getGoal.declaration.name!]: getGoal,
-  [goalTool.declaration.name!]: goalTool,
+  [finishGoal.declaration.name!]: finishGoal,
+  [rememberGoal.declaration.name!]: rememberGoal,
+  [updateWorkStepStatus.declaration.name!]: updateWorkStepStatus,
   [bashCommandTool.declaration.name!]: bashCommandTool,
   [nodejsScriptTool.declaration.name!]: nodejsScriptTool,
   [filesReadTool.declaration.name!]: filesReadTool,
@@ -95,7 +102,9 @@ const main = async () => {
       {
         functionDeclarations: [
           getGoal.declaration,
-          goalTool.declaration,
+          finishGoal.declaration,
+          rememberGoal.declaration,
+          updateWorkStepStatus.declaration,
           bashCommandTool.declaration,
           nodejsScriptTool.declaration,
           filesReadTool.declaration,
@@ -146,9 +155,7 @@ const main = async () => {
 
       // Use the chat API to send messages and get streaming responses
       const response = await chat.sendMessageStream({
-        message:
-          question +
-          "(注意识别意图, 有新意图的话写入 remember_goal 工具, 记录任务目标和步骤. 不大清楚的时候查询通过 get_goal 工具来了解当前任务目标和步骤. 使用中文回复.)",
+        message: question,
         config: {
           httpOptions: { baseUrl: geminiBaseUrl },
           tools,
@@ -203,8 +210,12 @@ const main = async () => {
                   // result.originalQuestion = question;
                   // result.toolName = tool.shortName;
 
+                  const goalState = await getGoal.toolFn({});
+
                   nextQuestion =
-                    "answer based previous command response:\n" +
+                    "current goal state:\n" +
+                    formatThinObject(goalState) +
+                    "\nanswer based previous command response:\n" +
                     formatThinObject(result);
                   continue outerWhile;
                 } catch (error) {

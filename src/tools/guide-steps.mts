@@ -1,7 +1,11 @@
 import { execSync } from "node:child_process";
 import os from "node:os";
 
-export let guideSteps = `你现在是命令行助手，需要自己安排计划来完成指定任务, 通过 remember_goal 工具记录任务目标和步骤。后续可以通过 get_goal 工具来获取当前任务目标和步骤。
+export let guideSteps = `你现在是 Agent, 现在系统中提供了可以记录修改状态的工具,
+- get_goal 工具来获取当前任务目标和步骤, 初始是未设置的。
+- remember_goal 用于写入任务和步骤, 记录任务目标和步骤. 要求在第一次接受到任务时分解任务目标和步骤, 并写入 remember_goal 工具。
+- update_work_step_status 用于更新某个步骤的完成状态.
+- finish_goal 工具来确认任务已完成并清除当前目标。
 
 在每次与用户交互时，都要积极、主动地思考并提供帮助。
 
@@ -39,7 +43,9 @@ export const toolContextPrompt = () => {
     "\n" +
     "**可用的工具及其使用策略：**\n" +
     "- `get_goal` tool: 获取当前任务目标和步骤。**在开始任何任务前，先使用此工具了解当前任务目标和步骤。**\n" +
+    "- `finish_goal` tool: 完成当前任务目标。**在任务完成后，使用此工具来确认任务已完成并清除当前目标。**\n" +
     "- `remember_goal` tool: 记住任务目标和步骤。**在开始任何任务前，先使用此工具记录目标和计划。任务完成以后确认.**\n" +
+    "- `update_work_step_status` tool: 更新某个步骤的完成状态。**在完成一个步骤后，使用此工具来更新步骤的完成状态。**\n" +
     "- `current_dir` tool: 获取当前目录信息（`ls -F` 命令）。**在开始任何任务或环境不确定时，优先使用此工具以获取当前上下文。**\n" +
     "- `bash_command` tool: 执行 Bash 命令。适用于大多数命令行操作，如文件操作（mv, cp, rm, mkdir），程序执行，查看系统信息等。**对于直接的 Unix 命令输入，直接调用此工具。**\n" +
     "- `nodejs_script` tool: 执行 Node.js 代码。当你需要进行更复杂的逻辑处理、文件内容解析（JSON, YAML）、网络请求、或者需要访问 Node.js 内置模块功能时使用。例如，计算、字符串处理、简单的服务器/脚本逻辑。\n" +
