@@ -7,7 +7,7 @@ export let currentDirTool: MacrophyllaTool = {
   shortName: "current directory",
   skipConfirmation: true,
   previewFn: (args: any) => {
-    console.log(`Current directory: ${args.path}`);
+    console.log(`Read current directory.`);
   },
   declaration: {
     name: "current_dir",

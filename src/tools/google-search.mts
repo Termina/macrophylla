@@ -35,7 +35,7 @@ export let googleSearchTool: MacrophyllaTool = {
 
     try {
       const response = await genAi.models.generateContent({
-        model: "gemini-2.5-flash-preview-04-17",
+        model: "gemini-2.5-flash",
         contents: [query],
         config: {
           tools: [{ googleSearch: {} }],
