@@ -21,3 +21,28 @@ export const displayBoxedText = (text: string) => {
   });
   console.log(chalk.gray("└" + "─".repeat(maxLength + 2) + "┘"));
 };
+
+/** Format an object into a thin string representation */
+export const formatThinObject = (obj: any, base: string = ""): string => {
+  if (obj === null || obj === undefined) {
+    return undefined as any;
+  }
+  if (["string", "number", "boolean"].includes(typeof obj)) {
+    return `${obj}`;
+  }
+  if (Array.isArray(obj)) {
+    return obj
+      .map((item, idx) => formatThinObject(item, base + `[${idx}]`))
+      .join("\n---- Next Item ----\n");
+  }
+
+  return Object.entries(obj)
+    .filter(([key, value]) => value != null)
+    .map(
+      ([key, value]) =>
+        `---- ${base + "." + key} ----\n${
+          formatThinObject(value, base + "." + key) || "(empty)"
+        }\n`
+    )
+    .join("\n");
+};
