@@ -1,4 +1,5 @@
 import * as readline from "readline";
+import { parseArgs } from "node:util";
 import chalk from "chalk";
 import {
   Content,
@@ -9,6 +10,18 @@ import {
   Tool,
   ToolConfig,
 } from "@google/genai";
+
+// --- Suppress Experimental Warning ---
+const originalWarn = console.warn;
+console.warn = (...args: any[]) => {
+  if (
+    typeof args[0] === "string" &&
+    args[0].includes("Interactions usage is experimental")
+  ) {
+    return;
+  }
+  originalWarn(...args);
+};
 
 import { handleChildSIGINT } from "./tools/task-state.mjs";
 import { bashCommandTool } from "./tools/bash-commad.mjs";
@@ -30,19 +43,42 @@ import {
 
 // --- Agent State Definition ---
 interface AgentState {
-  history: Content[];
-  currentMessageParts: Part[];
+  history: any[];
+  currentMessageParts: any[];
+  lastInteractionId: string | null;
 }
 
 // --- Tool & Model Configuration ---
-const genAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
-const geminiBaseUrl = process.env.GEMINI_BASE_URL;
+const { values: args } = parseArgs({
+  options: {
+    verbose: { type: "boolean", short: "v" },
+    "thinking-budget": { type: "string", short: "b" },
+    model: { type: "string", short: "m" },
+    "base-url": { type: "string" },
+  },
+  strict: false,
+});
+
 const verbose =
-  (process.env.verbose || process.env.VERBOSE) === "true" || false;
+  args.verbose ?? (process.env.verbose || process.env.VERBOSE) === "true";
 const thinkingBudget = parseInt(
-  process.env.thinking_budget || process.env.THINKING_BUDGET || "400",
-  10
+  (args["thinking-budget"] as string) ??
+    process.env.thinking_budget ??
+    process.env.THINKING_BUDGET ??
+    "400",
+  10,
 );
+const macrophyllaModel =
+  (args.model as string) ??
+  process.env["MACROPHYLLA_MODEL"] ??
+  "gemini-3-flash-preview";
+const geminiBaseUrl =
+  (args["base-url"] as string) ?? process.env.GEMINI_BASE_URL;
+
+const genAi = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY!,
+  baseUrl: geminiBaseUrl,
+} as any);
 
 const toolsDict: Record<string, MacrophyllaTool> = {
   [getGoal.declaration.name!]: getGoal,
@@ -66,121 +102,189 @@ const tools: Tool[] = [
   { functionDeclarations: Object.values(toolsDict).map((t) => t.declaration) },
 ];
 
+function normalizeSchema(schema: any): any {
+  if (!schema) return schema;
+  const newSchema = { ...schema };
+  if (typeof newSchema.type === "number") {
+    const types = [
+      "unspecified",
+      "string",
+      "number",
+      "integer",
+      "boolean",
+      "array",
+      "object",
+    ];
+    newSchema.type = types[newSchema.type] || newSchema.type;
+  }
+  if (typeof newSchema.type === "string") {
+    newSchema.type = newSchema.type.toLowerCase();
+  }
+  if (newSchema.properties) {
+    const newProps: any = {};
+    for (const key in newSchema.properties) {
+      newProps[key] = normalizeSchema(newSchema.properties[key]);
+    }
+    newSchema.properties = newProps;
+  }
+  if (newSchema.items) {
+    newSchema.items = normalizeSchema(newSchema.items);
+  }
+  return newSchema;
+}
+
 // --- Agent Nodes (Core Logic) ---
 
 async function callModel(
-  state: AgentState
-): Promise<{ modelResponseParts: Part[]; toolCalls?: FunctionCall[] }> {
+  state: AgentState,
+): Promise<{
+  modelResponseParts: any[];
+  toolCalls?: any[];
+  interactionId: string;
+}> {
   console.log(chalk.gray("\nThinking...\n"));
 
-  const chat = genAi.chats.create({
-    model: process.env["MACROPHYLLA_MODEL"] || "gemini-2.5-flash",
-    config: { systemInstruction: toolContextPrompt() },
-    history: state.history,
-  });
+  const model = macrophyllaModel;
+  const system_instruction = toolContextPrompt();
 
-  const response = await chat.sendMessageStream({
-    message: state.currentMessageParts,
-    config: {
-      httpOptions: { baseUrl: geminiBaseUrl },
-      tools,
-      toolConfig,
+  const requestPayload: any = {
+    model,
+    system_instruction,
+    input: state.currentMessageParts,
+    stream: true,
+    generation_config: {
       temperature: 0.2,
-      thinkingConfig:
-        thinkingBudget > 256
-          ? { includeThoughts: true, thinkingBudget: thinkingBudget }
-          : undefined,
+      thinking_level: thinkingBudget > 256 ? "high" : "low",
     },
-  });
+    tools:
+      tools.length > 0
+        ? (tools[0] as any).functionDeclarations.map((d: any) => ({
+            type: "function",
+            name: d.name,
+            description: d.description,
+            parameters: normalizeSchema(d.parameters),
+          }))
+        : [],
+  };
 
-  const newToolCalls: FunctionCall[] = [];
-  const modelResponseParts: Part[] = [];
+  if (state.lastInteractionId) {
+    requestPayload.previous_interaction_id = state.lastInteractionId;
+  } else if (state.history.length > 0) {
+    // If we have history but no lastInteractionId, use stateless mode by sending full history
+    requestPayload.input = state.history.concat([
+      { role: "user", content: state.currentMessageParts },
+    ]);
+  }
+
+  const response = await (genAi as any).interactions.create(requestPayload);
+
+  const newToolCalls: any[] = [];
+  const modelResponseParts: any[] = [];
   let textResponse = "";
+  let interactionId = "";
 
   for await (const chunk of response) {
-    if (chunk.functionCalls) {
-      newToolCalls.push(...chunk.functionCalls);
-    }
-    const text = chunk.text;
-    if (text) {
-      textResponse += text;
-      process.stdout.write(text);
+    if (chunk.event_type === "content.delta") {
+      const delta = chunk.delta;
+      if (delta.type === "text") {
+        textResponse += delta.text;
+        process.stdout.write(delta.text);
+      } else if (delta.type === "thought") {
+        if (verbose && delta.thought) {
+          process.stdout.write(chalk.dim(delta.thought));
+        }
+      } else if (delta.type === "function_call") {
+        newToolCalls.push(delta);
+      }
+    } else if (chunk.event_type === "interaction.complete") {
+      interactionId = chunk.interaction?.id || "";
+      const outputs = chunk.interaction?.outputs || [];
+      if (Array.isArray(outputs)) {
+        for (const output of outputs) {
+          modelResponseParts.push(output);
+          if (
+            output.type === "function_call" &&
+            !newToolCalls.some((c) => c.id === output.id)
+          ) {
+            newToolCalls.push(output);
+          }
+        }
+      }
     }
   }
 
-  if (textResponse) {
-    modelResponseParts.push({ text: textResponse });
-  }
-  if (newToolCalls.length > 0) {
-    newToolCalls.forEach(call => {
-      modelResponseParts.push({ functionCall: call });
-    });
+  if (textResponse && !modelResponseParts.some((p) => p.type === "text")) {
+    modelResponseParts.push({ type: "text", text: textResponse });
   }
 
   return {
     modelResponseParts,
     toolCalls: newToolCalls.length > 0 ? newToolCalls : undefined,
+    interactionId,
   };
 }
 
 async function executeTools(
-  toolCalls: FunctionCall[]
-): Promise<{ toolResultParts: Part[] }> {
-  const toolResultParts: Part[] = [];
+  toolCalls: any[],
+): Promise<{ toolResultParts: any[] }> {
+  const toolResultParts: any[] = [];
 
   for (const call of toolCalls) {
     const tool = call.name ? toolsDict[call.name] : undefined;
     if (!tool) {
       console.log(chalk.red(`\nError: Unsupported tool ${call.name}`));
       toolResultParts.push({
-        functionResponse: {
-          name: call.name,
-          response: { error: `Unsupported tool: ${call.name}` },
-        },
+        type: "function_result",
+        name: call.name,
+        call_id: call.id,
+        result: { error: `Unsupported tool: ${call.name}` },
       });
       continue;
     }
 
-    console.log(chalk.yellow(`\nExecuting ${tool.shortName}...`));
-    tool.previewFn(call.args);
+    console.log(chalk.gray(`\nExecuting ${tool.shortName}...`));
+    tool.previewFn(call.arguments);
 
     let confirmation = "y";
     if (!tool.skipConfirmation) {
       confirmation = await ask(
-        `\nExecute this ${tool.shortName} script? (y/n): `
+        `\nExecute this ${tool.shortName} script? (y/n): `,
       );
     }
 
     if (sayingOk(confirmation)) {
       try {
-        const result = await tool.toolFn(call.args);
+        const result = await tool.toolFn(call.arguments);
         toolResultParts.push({
-          functionResponse: { name: call.name, response: result },
+          type: "function_result",
+          name: call.name,
+          call_id: call.id,
+          result: result,
         });
-        console.log(chalk.green("Execution finished."));
+        console.log(chalk.gray("Execution finished."));
       } catch (error) {
         const errorMsg = error.stderr || error.message;
         console.log(chalk.red(`\nExecution failed: ${errorMsg}`));
         await recordFailedAttempt.toolFn({
           step: `(Attempting) ${tool.shortName}`,
           toolName: tool.shortName,
-          toolArgs: call.args,
+          toolArgs: call.arguments,
           error: errorMsg,
         });
         toolResultParts.push({
-          functionResponse: {
-            name: call.name,
-            response: { error: errorMsg },
-          },
+          type: "function_result",
+          name: call.name,
+          call_id: call.id,
+          result: { error: errorMsg },
         });
       }
     } else {
       console.log(chalk.gray("Execution skipped by user."));
       toolResultParts.push({
-        functionResponse: {
-          name: call.name,
-          response: { error: "User skipped execution." },
-        },
+        type: "function_result",
+        name: call.name,
+        call_id: call.id,
+        result: { error: "User skipped execution." },
       });
     }
   }
@@ -216,33 +320,42 @@ const sayingOk = (message: string) =>
 // --- Main Agent Runner ---
 const main = async () => {
   try {
-    let history: Content[] = [];
+    let history: any[] = [];
+    let lastInteractionId: string | null = null;
+
+    console.log(chalk.gray(`\nUsing model: ${macrophyllaModel}`));
+
     while (true) {
       const userInput =
         (await ask("\nWhat's the task: ", true)) || "继续上一个会话的计划";
       if (userInput.toLowerCase() === "exit") {
-        console.log("\nBye!");
+        console.log(chalk.gray("\nBye!"));
         break;
       }
 
       let state: AgentState = {
         history: history,
-        currentMessageParts: [{ text: userInput }],
+        currentMessageParts: [{ type: "text", text: userInput }],
+        lastInteractionId: lastInteractionId,
       };
 
       // The "Graph" or State Machine Loop
       while (true) {
-        const { modelResponseParts, toolCalls } = await callModel(state);
+        const { modelResponseParts, toolCalls, interactionId } =
+          await callModel(state);
+
+        lastInteractionId = interactionId;
+        state.lastInteractionId = interactionId;
 
         state.history.push(
-          { role: "user", parts: state.currentMessageParts },
-          { role: "model", parts: modelResponseParts }
+          { role: "user", content: state.currentMessageParts },
+          { role: "model", content: modelResponseParts },
         );
 
         if (!toolCalls || toolCalls.length === 0) {
-          console.log(chalk.green("\nTask iteration complete."));
+          console.log(chalk.gray("\nTask iteration complete."));
           history = state.history;
-          break; 
+          break;
         }
 
         const { toolResultParts } = await executeTools(toolCalls);
